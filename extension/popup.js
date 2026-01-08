@@ -44,8 +44,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             // But we need config. Let's assume config is loaded in popup.html or we fetch it.
             // Let's add <script src="firebase_config.js"></script> to popup.html first.
             // For now, let's implement the fetch inline assuming config global exists.
-            if (window.FIREBASE_CONFIG && !window.FIREBASE_CONFIG.databaseURL.includes('YOUR_PROJECT_ID')) {
-                const statUrl = `${window.FIREBASE_CONFIG.databaseURL}/stats/total_queries.json`;
+            if (FIREBASE_CONFIG && FIREBASE_CONFIG.databaseURL && !FIREBASE_CONFIG.databaseURL.includes('YOUR_PROJECT_ID')) {
+                const statUrl = `${FIREBASE_CONFIG.databaseURL}/stats/total_queries.json`;
                 fetch(statUrl).then(res => res.json()).then(count => {
                     fetch(statUrl, { method: 'PUT', body: JSON.stringify((count || 0) + 1) });
                 }).catch(e => console.error('Log query failed', e));
