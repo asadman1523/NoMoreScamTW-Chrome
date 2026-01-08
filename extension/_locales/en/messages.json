@@ -1,0 +1,43 @@
+{
+    "appName": {
+        "message": "NoMoreScamTW",
+        "description": "The name of the extension"
+    },
+    "appDesc": {
+        "message": "Automatically warns you when visiting fraudulent websites listed by the government.",
+        "description": "The description of the extension"
+    },
+    "settingsTitle": {
+        "message": "Settings"
+    },
+    "showLeaveBtnLabel": {
+        "message": "Show 'Leave Now' button"
+    },
+    "databaseStatus": {
+        "message": "Database Status: Online"
+    },
+    "lastUpdatedLabel": {
+        "message": "Last Updated:"
+    },
+    "nextUpdateLabel": {
+        "message": "Next Update:"
+    },
+    "totalRecordsLabel": {
+        "message": "Total Records:"
+    },
+    "btnUpdate": {
+        "message": "Update Database"
+    },
+    "dbInitializing": {
+        "message": "Database Initializing..."
+    },
+    "termsNotAccepted": {
+        "message": "⚠️ Disclaimer not accepted"
+    },
+    "btnOpenTerms": {
+        "message": "Open Terms"
+    },
+    "cooldownLabel": {
+        "message": "Updating Cooldown"
+    }
+}
