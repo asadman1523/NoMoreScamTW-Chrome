@@ -276,7 +276,7 @@ async function updateDatabase() {
         cachedDatabase = mergedData; // Update cache
 
         // 確保下次更新已排程並顯示
-        scheduleDailyUpdate();
+        await scheduleDailyUpdate();
         console.log(`Database updated. Loaded ${totalRawCount} raw records (${uniqueEntries} unique sites).`);
         return { success: true, count: totalRawCount };
 
@@ -372,15 +372,15 @@ async function checkUrl(url) {
 }
 
 // 根據上次更新時間排程每日更新
-function scheduleDailyUpdate(lastUpdatedTime) {
+async function scheduleDailyUpdate(lastUpdatedTime) {
     const baseTime = lastUpdatedTime || Date.now();
-    const nextRun = baseTime + 24 * 60 * 60 * 1000;
+    const nextRun = baseTime + 7 * 24 * 60 * 60 * 1000;
 
     chrome.alarms.create('dailyUpdate', {
         when: nextRun,
-        periodInMinutes: 1440 // 24 小時
+        periodInMinutes: 10080 // 7 天
     });
-    chrome.storage.local.set({ nextUpdateTime: nextRun });
+    await chrome.storage.local.set({ nextUpdateTime: nextRun });
 }
 
 // 事件監聽器
@@ -415,7 +415,7 @@ chrome.runtime.onStartup.addListener(async () => {
 
     const now = Date.now();
     // 如果從未更新或距離上次更新超過 24 小時
-    if (!lastUpdated || (now - lastUpdated) >= 24 * 60 * 60 * 1000) {
+    if (!lastUpdated || (now - lastUpdated) >= 7 * 24 * 60 * 60 * 1000) {
         console.log('Startup: Database outdated, updating...');
         await updateDatabase();
     } else {
