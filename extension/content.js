@@ -86,8 +86,30 @@ function checkGovImpersonation() {
   const hostname = window.location.hostname;
 
   // Skip if already on a gov.tw site
+  // Skip if already on a gov.tw site
   if (hostname.endsWith('.gov.tw')) return;
 
+  // Check Quota (Async) - We fire and forget or wrap in async. 
+  // Since checkGovImpersonation is called by setTimeout/Observer, it can be async.
+  try {
+    chrome.runtime.sendMessage({ action: 'checkQuota', type: 'web' }, (response) => {
+      // Suppress invalid context error
+      if (chrome.runtime.lastError) return;
+
+      if (!response || !response.canScan) {
+        // Quota exceeded
+        return;
+      }
+
+      // ... Proceed with check ...
+      proceedWithGovCheck(title, hostname);
+    });
+  } catch (e) {
+    // Suppress
+  }
+}
+
+function proceedWithGovCheck(title, hostname) {
   // Skip valid Google domains (Gmail, Search, etc.) to prevent false positives
   // Gmail has its own dedicated filter (gmail_filter.js)
   if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com') return;

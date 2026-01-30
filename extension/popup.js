@@ -1,29 +1,109 @@
 document.addEventListener('DOMContentLoaded', async () => {
     const statusDiv = document.getElementById('status');
-    const updateBtn = document.getElementById('updateBtn');
+    // const updateBtn = document.getElementById('updateBtn');
 
     // Load initial status
     updateStatus();
+    updateLicenseStatus(); // New: Check License
 
+    /*
     document.getElementById('updateBtn').addEventListener('click', () => {
-        chrome.runtime.sendMessage({ action: 'updateDatabase' }, (response) => {
-            if (chrome.runtime.lastError) {
-                alert('通訊錯誤：' + chrome.runtime.lastError.message);
-                return;
-            }
+        // ... (Removed) ...
+    });
+    */
+
+    // License Activation
+    document.getElementById('activateBtn').addEventListener('click', () => {
+        const input = document.getElementById('licenseInput');
+        const msgDiv = document.getElementById('activationMsg');
+        const key = input.value.trim();
+
+        if (!key) {
+            msgDiv.textContent = '請輸入序號';
+            return;
+        }
+
+        msgDiv.textContent = '啟用中...';
+        document.getElementById('activateBtn').disabled = true;
+
+        chrome.runtime.sendMessage({ action: 'activateLicense', key: key }, (response) => {
+            document.getElementById('activateBtn').disabled = false;
+
             if (response && response.success) {
-                updateStatus();
-                // alert('資料庫更新成功！\n共 ' + response.count + ' 筆資料。');
+                msgDiv.textContent = '';
+                alert('🎉 啟用成功！您現在擁有 365 天無限次防護。');
+                updateLicenseStatus();
+                input.value = '';
             } else {
-                const errorMsg = response && response.error ? response.error : '未知錯誤';
-                // Use JSON.stringify for object errors to make them readable
-                const debugInfo = typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg;
-                alert('更新失敗：' + debugInfo);
+                msgDiv.textContent = '❌ ' + (response ? response.error : '啟用失敗');
             }
         });
     });
 
-    // Manual Query Handler
+    function updateLicenseStatus() {
+        chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {
+            if (!stats) return;
+
+            const planLabel = document.getElementById('planLabel');
+            const expiryLabel = document.getElementById('expiryLabel');
+            const activationArea = document.getElementById('activationArea');
+
+            // 1. Plan Status
+            if (stats.isPremium) {
+                planLabel.textContent = '👑 版本: 進階版 (Premium)';
+                planLabel.style.color = '#2e7d32'; // Green
+
+                if (stats.expiryDate) {
+                    const expiry = new Date(stats.expiryDate).toLocaleDateString('zh-TW');
+                    expiryLabel.textContent = `到期日: ${expiry}`;
+                }
+
+                // Hide Activation
+                activationArea.style.display = 'none';
+
+                // Unlimited Usage UI
+                document.getElementById('webUsage').textContent = '無限';
+                document.getElementById('webProgress').style.width = '100%';
+                document.getElementById('webProgress').style.background = '#4caf50'; // Green
+
+                document.getElementById('emailUsage').textContent = '無限';
+                document.getElementById('emailProgress').style.width = '100%';
+                document.getElementById('emailProgress').style.background = '#4caf50'; // Green
+
+            } else {
+                planLabel.textContent = '💎 版本: 免費版';
+                planLabel.style.color = '#e65100'; // Orange
+                expiryLabel.textContent = '';
+
+                activationArea.style.display = 'block';
+
+                // Web Usage
+                const webPct = Math.min((stats.web.current / stats.web.limit) * 100, 100);
+                document.getElementById('webUsage').textContent = `${stats.web.current} / ${stats.web.limit}`;
+                document.getElementById('webProgress').style.width = `${webPct}%`;
+
+                if (stats.web.current >= stats.web.limit) {
+                    document.getElementById('webProgress').style.background = '#d32f2f'; // Red
+                } else {
+                    document.getElementById('webProgress').style.background = '#fb8c00'; // Orange
+                }
+
+                // Email Usage
+                const emailPct = Math.min((stats.email.current / stats.email.limit) * 100, 100);
+                document.getElementById('emailUsage').textContent = `${stats.email.current} / ${stats.email.limit}`;
+                document.getElementById('emailProgress').style.width = `${emailPct}%`;
+
+                if (stats.email.current >= stats.email.limit) {
+                    document.getElementById('emailProgress').style.background = '#d32f2f'; // Red
+                } else {
+                    document.getElementById('emailProgress').style.background = '#fb8c00'; // Orange
+                }
+            }
+        });
+    }
+
+    /*
+    // Manual Query Handler (Removed)
     document.getElementById('manualQueryBtn').addEventListener('click', () => {
         const input = document.getElementById('manualQueryInput');
         const resultDiv = document.getElementById('manualQueryResult');
@@ -230,6 +310,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
     });
+    */
 
     // Set text dynamically to prevent flash
     document.getElementById('appName').textContent = chrome.i18n.getMessage('appName');
@@ -242,7 +323,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { lastUpdated, nextUpdateTime, termsAccepted, totalEntries } = await chrome.storage.local.get(['lastUpdated', 'nextUpdateTime', 'termsAccepted', 'totalEntries']);
 
         // Set Default Button Text if nothing else happens
-        updateBtn.textContent = chrome.i18n.getMessage('btnUpdate') || 'Update Database';
+        // updateBtn.textContent = chrome.i18n.getMessage('btnUpdate') || 'Update Database';
 
         if (!termsAccepted) {
             statusDiv.innerHTML = `
@@ -252,15 +333,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('openTermsBtn').addEventListener('click', () => {
                 chrome.tabs.create({ url: 'welcome.html' });
             });
-            updateBtn.disabled = true;
+            // updateBtn.disabled = true;
             return;
         }
 
         if (lastUpdated) {
-            const lastDate = new Date(lastUpdated).toLocaleString();
-            const nextDate = nextUpdateTime ? new Date(nextUpdateTime).toLocaleString() : '...';
+            const lastDate = new Date(lastUpdated).toLocaleString('zh-TW'); // Use locale string
+            const nextDate = nextUpdateTime ? new Date(nextUpdateTime).toLocaleString('zh-TW') : '...';
             const count = totalEntries || 0;
 
+            /*
             // Check cooldown (5 minutes = 300000 ms)
             const now = Date.now();
             const timeDiff = now - lastUpdated;
@@ -274,40 +356,40 @@ document.addEventListener('DOMContentLoaded', async () => {
                 updateBtn.disabled = false;
                 updateBtn.textContent = chrome.i18n.getMessage('btnUpdate') || 'Update Database';
             }
+            */
 
             statusDiv.innerHTML = `
         <strong>${chrome.i18n.getMessage('databaseStatus') || 'Status: Online'}</strong><br>
+        <span style="font-size:12px">
         ${chrome.i18n.getMessage('lastUpdatedLabel') || 'Last Updated:'} ${lastDate}<br>
         ${chrome.i18n.getMessage('nextUpdateLabel') || 'Next Update:'} ${nextDate}<br>
         ${chrome.i18n.getMessage('totalRecordsLabel') || 'Total Records:'} ${count}
+        </span>
       `;
         } else {
             const { lastError } = await chrome.storage.local.get('lastError');
             if (lastError) {
                 statusDiv.innerHTML = `
-                    <div style="color: #d93025; margin-bottom: 5px;">${chrome.i18n.getMessage('dbInitializing') || 'Initializing...'}</div>
+                    <div style="color: #d93025; margin-bottom: 5px;">${chrome.i18n.getMessage('dbInitializing') || 'Initialization Failed'}</div>
                     <div style="font-size: 11px; color: #999;">Error: ${lastError}</div>
+                    <button id="retryBtn" style="margin-top:5px; padding:4px 8px; font-size:11px;">Retry</button>
                 `;
+                document.getElementById('retryBtn').addEventListener('click', () => {
+                    statusDiv.textContent = 'Retrying...';
+                    chrome.runtime.sendMessage({ action: 'forceUpdate' }, () => updateStatus());
+                });
             } else {
-                statusDiv.textContent = chrome.i18n.getMessage('dbInitializing') || 'Initializing...';
+                statusDiv.innerHTML = `
+                    <div id="initMsg">${chrome.i18n.getMessage('dbInitializing') || '正在下載反詐騙資料庫...'}</div>
+                    <div style="font-size: 10px; color: #888; margin-top: 4px;">(首次下載需時約 10-20 秒，請稍候)</div>
+                `;
+
+                // Trigger update silently if needed
+                chrome.runtime.sendMessage({ action: 'forceUpdate' });
             }
-            updateBtn.disabled = false;
-            updateBtn.textContent = chrome.i18n.getMessage('btnUpdate') || 'Update Database';
         }
     }
+    /* Footer Removed
     // Footer Links Handlers
-    document.getElementById('githubLink').addEventListener('click', (e) => {
-        e.preventDefault();
-        chrome.tabs.create({ url: 'https://github.com/asadman1523/NoMoreScamTW' });
-    });
-
-    document.getElementById('opayBtn').addEventListener('click', (e) => {
-        e.preventDefault();
-        chrome.tabs.create({ url: 'https://example.invalid/retired-payment' });
-    });
-
-    document.getElementById('paypalBtn').addEventListener('click', (e) => {
-        e.preventDefault();
-        chrome.tabs.create({ url: 'https://example.invalid/retired-payment' });
-    });
+    */
 });

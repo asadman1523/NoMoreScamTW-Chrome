@@ -9,7 +9,8 @@
     "tabs",
     "scripting",
     "alarms",
-    "contextMenus"
+    "contextMenus",
+    "notifications"
   ],
   "host_permissions": [
     "https://opdadm.moi.gov.tw/*",

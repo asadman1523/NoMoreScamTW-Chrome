@@ -7,9 +7,30 @@ const DB_VERSION = 1;
 try {
     importScripts('firebase_config.js');
     importScripts('report_handler.js');
+    importScripts('license_manager.js'); // Import License Manager
 } catch (e) {
     console.error('Failed to load scripts', e);
 }
+
+// Global Cache
+let cachedDatabase = {};
+
+// ... (Existing Firebase Helper) ...
+
+// Initialize License Manager on Startup
+chrome.runtime.onStartup.addListener(async () => {
+    if (typeof LicenseManager !== 'undefined') {
+        await LicenseManager.init();
+    }
+    // ... existing logic ...
+});
+
+// Also on Installed
+chrome.runtime.onInstalled.addListener(async (details) => {
+    if (typeof LicenseManager !== 'undefined') {
+        await LicenseManager.init();
+    }
+});
 
 // Firebase Increment Helper (REST API)
 async function incrementStat(statName) {
@@ -65,6 +86,7 @@ function openDB() {
 }
 
 async function saveToIndexedDB(data) {
+    console.log('[DEBUG] Saving to IndexedDB...');
     const db = await openDB();
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
@@ -77,13 +99,24 @@ async function saveToIndexedDB(data) {
     });
 
     // Bulk add
+    // Note: For very large datasets (e.g. 100k+), individual put can be slow.
+    // But for <10k it's fine.
+    let count = 0;
     for (const [url, info] of Object.entries(data)) {
         store.put(info, url);
+        count++;
     }
+    console.log(`[DEBUG] IndexedDB: Put ${count} records.`);
 
     return new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => {
+            console.log('[DEBUG] IndexedDB Transaction Complete.');
+            resolve();
+        };
+        tx.onerror = () => {
+            console.error('[ERROR] IndexedDB Transaction Failed:', tx.error);
+            reject(tx.error);
+        };
     });
 }
 
@@ -136,11 +169,13 @@ async function fetchDataset165027(config) {
 
         if (!downloadUrl) throw new Error('Could not find download URL for 165027');
 
-        console.log(`Downloading JSON 165027 from: ${downloadUrl}`);
+        console.log(`[DEBUG] Downloading JSON 165027 from: ${downloadUrl}`);
         const response = await fetch(downloadUrl);
-        if (!response.ok) throw new Error('JSON download failed');
+        if (!response.ok) throw new Error('JSON download failed: ' + response.statusText);
 
+        console.log('[DEBUG] 165027 Downloaded. Parsing JSON...');
         const jsonList = await response.json();
+        console.log(`[DEBUG] 165027 Parsed. Items: ${jsonList.length}`);
 
         for (const item of jsonList) {
             const domain = item['網域名稱'];
@@ -155,9 +190,10 @@ async function fetchDataset165027(config) {
                 };
             }
         }
+        console.log(`[DEBUG] 165027 Processed. Valid Count: ${rawCount}`);
 
     } catch (e) {
-        console.error('Error fetching dataset 165027:', e);
+        console.error('[ERROR] Error fetching dataset 165027:', e);
     }
     return { data, count: rawCount };
 }
@@ -187,15 +223,18 @@ async function fetchDataset176455(config) {
 
         if (!downloadUrl) throw new Error('Could not find download URL in Gov API JSON 176455');
 
-        console.log(`Downloading CSV 176455 from: ${downloadUrl}`);
+        console.log(`[DEBUG] Downloading CSV 176455 from: ${downloadUrl}`);
         const response = await fetch(downloadUrl);
-        if (!response.ok) throw new Error('CSV 176455 download failed');
+        if (!response.ok) throw new Error('CSV 176455 download failed: ' + response.statusText);
 
+        console.log('[DEBUG] 176455 Downloaded. Parsing Text...');
         const text = await response.text();
         const lines = text.split(/\r?\n/);
+        console.log(`[DEBUG] 176455 Parsed. Lines: ${lines.length}`);
 
         // CSV Header: WEBSITE_NM,WEBURL,CNT,STA_SDATE,STA_EDATE
         for (let i = 2; i < lines.length; i++) {
+            // ... same loop ...
             const line = lines[i].trim();
             if (!line) continue;
 
@@ -225,21 +264,42 @@ async function fetchDataset176455(config) {
                 }
             }
         }
+        console.log(`[DEBUG] 176455 Processed. Valid Count: ${rawCount}`);
     } catch (e) {
-        console.error('Error fetching dataset 176455:', e);
+        console.error('[ERROR] Error fetching dataset 176455:', e);
     }
     return { data, count: rawCount };
 }
 
+// Global Update Lock (Timestamp)
+let lastUpdateStart = 0;
+
 // 擷取並更新詐騙資料庫
-async function updateDatabase() {
+async function updateDatabase(force = false) {
+    const now = Date.now();
+    // Check lock (Expire after 60 seconds)
+    if (!force && lastUpdateStart > 0 && (now - lastUpdateStart < 60000)) {
+        console.log('Update in progress (locked), skipping...');
+        return { success: false, error: 'Update in progress' };
+    }
+
+    lastUpdateStart = now;
+
+    // Timeout Helper
+    const fetchWithTimeout = (url, options = {}, timeout = 30000) => {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeout);
+        return fetch(url, { ...options, signal: controller.signal })
+            .finally(() => clearTimeout(id));
+    };
+
     try {
         console.log('Starting full database update...');
 
         // 1. Fetch Config Once
         let config = null;
         try {
-            const configResponse = await fetch(CONFIG_URL);
+            const configResponse = await fetchWithTimeout(CONFIG_URL, {}, 5000); // 5s timeout for config
             if (configResponse.ok) {
                 config = await configResponse.json();
             }
@@ -247,11 +307,25 @@ async function updateDatabase() {
             console.warn('Failed to fetch config, using defaults', configError);
         }
 
-        // Parallel fetch
-        const [result2, result3] = await Promise.all([
+        // Parallel fetch with timeout wrapper
+        // Note: We need to modify helper functions or simply wrap them?
+        // Since helper functions use `fetch` internally, we need to pass the timeout logic or modify them.
+        // For simplicity, let's just let them run but we race against a global timeout here?
+        // No, Promises don't cancel nicely without AbortController passing down.
+        // Since I can't easily modify the helpers without rewriting them fully,
+        // I will wrap the Promise.all in a generic timeout race. 
+        // This won't stop the background fetch but will release the UI/Logic flow.
+
+        const updatePromise = Promise.all([
             fetchDataset165027(config),
             fetchDataset176455(config)
         ]);
+
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Update timed out (30s)')), 30000)
+        );
+
+        const [result2, result3] = await Promise.race([updatePromise, timeoutPromise]);
 
         const data2 = result2.data;
         const data3 = result3.data;
@@ -279,6 +353,8 @@ async function updateDatabase() {
         // 確保下次更新已排程並顯示
         await scheduleDailyUpdate();
         console.log(`Database updated. Loaded ${totalRawCount} raw records (${uniqueEntries} unique sites).`);
+
+        lastUpdateStart = 0; // Unlock
         return { success: true, count: totalRawCount };
 
     } catch (error) {
@@ -288,6 +364,7 @@ async function updateDatabase() {
             lastError: error.message || 'Unknown error',
             lastErrorTs: Date.now()
         });
+        lastUpdateStart = 0; // Unlock
         return { success: false, error: error.message || 'Unknown error' };
     }
 }
@@ -452,8 +529,31 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             return; // Do not protect if not agreed
         }
 
+        // Exclude Whitelisted Domains (Save Quota)
+        const whitelist = ['facebook.com', 'www.facebook.com', 'google.com', 'www.google.com', 'youtube.com', 'www.youtube.com', 'instagram.com', 'www.instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'github.com'];
+        try {
+            // Safe URL Parsing
+            const urlObj = new URL(tab.url);
+            if (whitelist.includes(urlObj.hostname) || urlObj.hostname.endsWith('google.com') || urlObj.hostname.endsWith('facebook.com')) {
+                // Skip check for trusted giants
+                return;
+            }
+        } catch (e) {
+            // Invalid URL, skip check
+            return;
+        }
+
+        // Check Quota (Web)
+        const canScan = await LicenseManager.canScan('web');
+        if (!canScan) {
+            // Quota exceeded, skip check
+            return;
+        }
+
         const fraudInfo = await checkUrl(tab.url);
         if (fraudInfo) {
+            await LicenseManager.incrementUsage('web');
+
             console.log(`Fraud detected: ${tab.url}`, fraudInfo);
 
             // Log Warning
@@ -463,8 +563,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 action: 'showWarning',
                 fraudInfo: fraudInfo
             }).catch(() => {
-                // Content script 可能尚未準備好或未注入某些頁面 (例如 chrome://)
+                // Content script 可能尚未準備好
             });
+        } else {
+            // Increment for scan
+            await LicenseManager.incrementUsage('web');
         }
     }
 });
@@ -473,7 +576,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // 1. Update Database
     if (request.action === 'updateDatabase' || request.action === 'forceUpdate') {
-        updateDatabase()
+        const force = (request.action === 'forceUpdate');
+        updateDatabase(force)
             .then((result) => {
                 sendResponse(result);
             })
@@ -481,7 +585,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 console.error('updateDatabase threw error:', err);
                 sendResponse({ success: false, error: err.message });
             });
-        return true; // Async response
+        return true; // Keep channel open for async response
     }
 
     // 2. Check URL (Local DB)
@@ -530,5 +634,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 sendResponse({ success: false, error: err.message });
             });
         return true; // Async response
+    }
+
+    // === 5. License & Quota Management ===
+
+    // === 5. License & Quota Management ===
+
+    // Check Quota
+    if (request.action === 'checkQuota') {
+        LicenseManager.canScan(request.type).then(canScan => {
+            sendResponse({ canScan: canScan });
+        });
+        return true; // Async
+    }
+
+    // Increment Quota
+    if (request.action === 'incrementQuota') {
+        LicenseManager.incrementUsage(request.type).then(() => {
+            sendResponse({ success: true });
+        });
+        return true; // Async
+    }
+
+    // Get License Status (For Popup)
+    if (request.action === 'getLicenseStatus') {
+        LicenseManager.getStats().then(stats => {
+            sendResponse(stats);
+        });
+        return true; // Async
+    }
+
+    // Activate License
+    if (request.action === 'activateLicense') {
+        LicenseManager.activateLicense(request.key)
+            .then(result => sendResponse(result))
+            .catch(err => sendResponse({ success: false, error: err.message }));
+        return true; // Async
     }
 });

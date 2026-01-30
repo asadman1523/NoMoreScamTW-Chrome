@@ -86,14 +86,23 @@ function scanLinks() {
 
         link.setAttribute('data-scam-checked', 'true'); // Optimistic mark
 
-        chrome.runtime.sendMessage({ action: 'checkUrl', url: url }, (response) => {
-            if (response) {
-                // It is a scam/fraud site
-                console.log("[NoMoreScam] Detected in Gmail:", url, response);
-                checkedLinks.add(url);
-                markLink(link, response);
-            }
-        });
+        try {
+            chrome.runtime.sendMessage({ action: 'checkUrl', url: url }, (response) => {
+                if (chrome.runtime.lastError) {
+                    // Suppress "Extension context invalidated" error on reload
+                    // console.warn('Runtime error:', chrome.runtime.lastError.message);
+                    return;
+                }
+                if (response) {
+                    // It is a scam/fraud site
+                    console.log("[NoMoreScam] Detected in Gmail:", url, response);
+                    checkedLinks.add(url);
+                    markLink(link, response);
+                }
+            });
+        } catch (e) {
+            // Context invalidated
+        }
     });
 }
 
@@ -180,28 +189,43 @@ function markGovAuthentic(element, result) {
     element.parentNode.insertBefore(safeBadge, element.nextSibling);
 }
 
-function scanEmailBody() {
+async function scanEmailBody() {
     // Gmail open email body container usually has class 'a3s'
     const emailBodies = document.querySelectorAll('.a3s');
 
-    emailBodies.forEach(body => {
-        if (body.getAttribute('data-gov-body-checked') === 'true') return;
+    for (const body of emailBodies) {
+        if (body.getAttribute('data-gov-body-checked') === 'true') continue;
+
+        // Check Quota before scanning
+        try {
+            const response = await chrome.runtime.sendMessage({ action: 'checkQuota', type: 'email' });
+            if (!response || !response.canScan) {
+                // Quota Exceeded - Stop processing this batch
+                // console.log('[NoMoreScam] Email Limit Reached'); 
+                return;
+            }
+
+            // Increment Quota (Count this email)
+            chrome.runtime.sendMessage({ action: 'incrementQuota', type: 'email' });
+        } catch (e) {
+            console.error('Quota check failed', e);
+        }
+
+        body.setAttribute('data-gov-body-checked', 'true');
 
         const text = body.innerText;
 
         if (typeof containsGovKeyword === 'function' && containsGovKeyword(text)) {
-            body.setAttribute('data-gov-body-checked', 'true');
-
             // Find the sender for this email. 
             // Structure is usually: .gs (email container) > 
             const container = body.closest('.gs');
-            if (!container) return;
+            if (!container) continue;
 
             const senderElem = container.querySelector('.gD');
-            if (!senderElem) return;
+            if (!senderElem) continue;
 
             const email = senderElem.getAttribute('email');
-            if (!email) return;
+            if (!email) continue;
 
             // Check if sender is gov.tw
             if (!email.endsWith('.gov.tw')) {
@@ -210,7 +234,7 @@ function scanEmailBody() {
                 markGovBodyImpersonation(body, email);
             }
         }
-    });
+    }
 }
 
 function markGovBodyImpersonation(bodyElement, senderEmail) {
