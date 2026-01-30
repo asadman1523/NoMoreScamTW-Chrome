@@ -1,10 +1,7 @@
 // Report Handler Logic (Message Based)
 // Functions are exposed globally via importScripts in background.js
 
-// Remove old context menus if they exist
-chrome.runtime.onInstalled.addListener(() => {
-    chrome.contextMenus.removeAll();
-});
+
 
 // Listener moved to background.js to prevent conflicts
 
