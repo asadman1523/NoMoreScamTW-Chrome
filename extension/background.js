@@ -6,8 +6,9 @@ const DB_VERSION = 1;
 // Import Firebase Config
 try {
     importScripts('firebase_config.js');
+    importScripts('report_handler.js');
 } catch (e) {
-    console.error('Failed to load firebase_config.js');
+    console.error('Failed to load scripts', e);
 }
 
 // Firebase Increment Helper (REST API)
@@ -294,11 +295,21 @@ async function updateDatabase() {
 // 檢查 URL 是否在資料庫中
 async function checkUrl(url) {
     try {
-        const urlObj = new URL(url);
-        const hostname = urlObj.hostname.toLowerCase();
-        // Clean URL: remove protocol and trailing slash, keep path
-        // e.g. https://example.com/foo -> example.com/foo
-        const cleanUrl = url.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
+        let hostname = '';
+        let cleanUrl = url.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
+
+        try {
+            const urlObj = new URL(url);
+            hostname = urlObj.hostname.toLowerCase();
+            // If mailto, use the email address as "hostname" or key
+            if (urlObj.protocol === 'mailto:') {
+                hostname = urlObj.pathname; // email address
+                cleanUrl = hostname;
+            }
+        } catch (e) {
+            // Not a valid URL, treat entire string as key (e.g. user entered email or partial domain)
+            hostname = cleanUrl.split('/')[0];
+        }
 
         // Use cache if available
         if (cachedDatabase && Object.keys(cachedDatabase).length > 0) {
@@ -460,6 +471,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 // popup 的訊息監聽器
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    // 1. Update Database
     if (request.action === 'updateDatabase' || request.action === 'forceUpdate') {
         updateDatabase()
             .then((result) => {
@@ -469,7 +481,54 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 console.error('updateDatabase threw error:', err);
                 sendResponse({ success: false, error: err.message });
             });
+        return true; // Async response
+    }
 
-        return true; // 保持通道開啟
+    // 2. Check URL (Local DB)
+    if (request.action === 'checkUrl') {
+        checkUrl(request.url).then((result) => {
+            sendResponse(result);
+        });
+        return true; // Async response
+    }
+
+    // 3. AI Analysis & Report (from Popup) - Defined in report_handler.js
+    if (request.action === 'analyzeAndReport') {
+        if (typeof analyzeWithAI !== 'function') {
+            console.error('analyzeWithAI function not found. Script load failed?');
+            sendResponse({ success: false, error: 'Internal Error: Report script not loaded.' });
+            return false;
+        }
+
+        analyzeWithAI(request.content)
+            .then(async (result) => {
+                if (result.isScam) {
+                    await addReportToFirebase(result);
+                }
+                sendResponse({ success: true, result: result });
+            })
+            .catch(err => {
+                console.error("AI Analysis Error:", err);
+                sendResponse({ success: false, error: err.message || 'AI Analysis Failed' });
+            });
+        return true; // Async response
+    }
+
+    // 4. Verify Gov Email (from Gmail Content Script) - Defined in report_handler.js
+    if (request.action === 'verifyGovEmail') {
+        if (typeof verifyGovWithAI !== 'function') {
+            sendResponse({ success: false, error: 'Internal Error: Report script not loaded.' });
+            return false;
+        }
+
+        const { name, email } = request;
+        verifyGovWithAI(name, email)
+            .then(result => {
+                sendResponse({ success: true, result: result });
+            })
+            .catch(err => {
+                sendResponse({ success: false, error: err.message });
+            });
+        return true; // Async response
     }
 });

@@ -172,8 +172,49 @@ document.addEventListener('DOMContentLoaded', async () => {
                         `;
                         } else {
                             resultDiv.innerHTML = `
-                            <div style="color: #2e7d32; font-weight: bold;">資料庫無紀錄</div>
+                            <div style="color: #2e7d32; font-weight: bold; margin-bottom: 8px;">資料庫無紀錄</div>
+                            <button id="btnAiReport" style="background:#d93025; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">回報為詐騙 (AI 分析)</button>
+                            <div id="aiReportStatus" style="font-size:11px; color:#666; margin-top:5px;"></div>
                         `;
+                            // Bind click event for the new button
+                            setTimeout(() => {
+                                const btn = document.getElementById('btnAiReport');
+                                if (btn) {
+                                    btn.addEventListener('click', () => {
+                                        const status = document.getElementById('aiReportStatus');
+                                        status.innerHTML = '🤖 AI 正在分析中...<br>(請稍候約 3-5 秒)';
+                                        btn.disabled = true;
+                                        btn.style.opacity = '0.7';
+
+                                        chrome.runtime.sendMessage({
+                                            action: 'analyzeAndReport',
+                                            content: cleanFullUrl
+                                        }, (response) => {
+                                            if (response && response.success) {
+                                                const result = response.result;
+                                                if (result.isScam) {
+                                                    status.innerHTML = `
+                                                    <span style="color:#d93025; font-weight:bold;">✅ 已確認為詐騙！</span><br>
+                                                    信心指數: ${result.confidence}%<br>
+                                                    類型: ${result.type}<br>
+                                                    <span style="color:#555;">已自動加入雲端資料庫。</span>
+                                                `;
+                                                } else {
+                                                    status.innerHTML = `
+                                                    <span style="color:#2e7d32; font-weight:bold;">ℹ️ AI 判定安全</span><br>
+                                                    信心指數: ${result.confidence}%<br>
+                                                    理由: ${result.reason || '未發現異常'}
+                                                `;
+                                                }
+                                            } else {
+                                                status.innerText = '❌ 分析失敗: ' + (response ? response.error : '未知錯誤');
+                                                btn.disabled = false;
+                                                btn.style.opacity = '1';
+                                            }
+                                        });
+                                    });
+                                }
+                            }, 100);
                         }
                     })
                     .catch(err => {

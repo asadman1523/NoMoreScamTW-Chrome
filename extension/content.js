@@ -15,9 +15,13 @@ function showWarning(fraudInfo) {
   overlay.innerHTML = `
     <div id="fraud-guard-modal">
       <div id="fraud-guard-icon">⚠️</div>
-      <div id="fraud-guard-title">警告：疑似詐騙網站</div>
+      <div id="fraud-guard-title">
+        ${fraudInfo.isImpersonationCheck ? '警告：非政府官方網站' : '警告：疑似詐騙網站'}
+      </div>
       <div id="fraud-guard-message">
-        您正在瀏覽的網站已被政府列為詐騙網站。請立即離開以保護您的財產安全。
+        ${fraudInfo.isImpersonationCheck
+      ? '本網站標題包含政府機關關鍵字，但並非使用 gov.tw 官方網域。這可能是假冒的政府網站。'
+      : '您正在瀏覽的網站已被政府列為詐騙網站。請立即離開以保護您的財產安全。'}
       </div>
       <div id="fraud-guard-details" style="text-align: left; margin: 15px 0; font-size: 0.9em; border: 1px solid #ffcccc; padding: 10px; background: #fff0f0;">
         <div><strong>網站名稱：</strong><span id="fg-name"></span></div>
@@ -75,3 +79,40 @@ function showWarning(fraudInfo) {
     document.body.style.overflow = '';
   });
 }
+
+// Check for Government Impersonation (Title matches Gov keywords but not gov.tw)
+function checkGovImpersonation() {
+  const title = document.title;
+  const hostname = window.location.hostname;
+
+  // Skip if already on a gov.tw site
+  if (hostname.endsWith('.gov.tw')) return;
+
+  // Skip valid Google domains (Gmail, Search, etc.) to prevent false positives
+  // Gmail has its own dedicated filter (gmail_filter.js)
+  if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com') return;
+
+  // Check if title contains government keywords
+  if (typeof containsGovKeyword === 'function' && containsGovKeyword(title)) {
+    // It's a match! The title claims to be government-related, but the URL is not.
+    console.log('MainPage: Government keyword detected in title, but not a gov.tw domain.');
+
+    showWarning({
+      name: '非政府官方網站警告',
+      url: hostname,
+      count: '⚠️',
+      startDate: '偵測到政府機關關鍵字',
+      endDate: '非 gov.tw 網域',
+      isImpersonationCheck: true // Special flag to adjust UI if needed
+    });
+  }
+}
+
+// Run check on load
+// Use a small delay to ensure title is fully loaded and gov_agencies.js is ready
+setTimeout(checkGovImpersonation, 1500);
+
+// Also observe title changes (for SPAs)
+new MutationObserver(() => {
+  checkGovImpersonation();
+}).observe(document.querySelector('title'), { subtree: true, characterData: true, childList: true });

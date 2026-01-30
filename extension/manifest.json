@@ -2,16 +2,18 @@
   "manifest_version": 3,
   "default_locale": "en",
   "name": "__MSG_appName__",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "description": "__MSG_appDesc__",
   "permissions": [
     "storage",
     "tabs",
     "scripting",
-    "alarms"
+    "alarms",
+    "contextMenus"
   ],
   "host_permissions": [
     "https://opdadm.moi.gov.tw/*",
+    "https://mail.google.com/*",
     "<all_urls>"
   ],
   "background": {
@@ -35,12 +37,23 @@
       "matches": [
         "<all_urls>"
       ],
-      "js": [
-        "content.js"
-      ],
       "css": [
         "styles.css"
+      ],
+      "js": [
+        "gov_agencies.js",
+        "content.js"
       ]
+    },
+    {
+      "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "gov_agencies.js",
+        "gmail_filter.js"
+      ],
+      "run_at": "document_idle"
     }
   ]
 }
