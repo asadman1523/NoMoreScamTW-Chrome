@@ -3,7 +3,7 @@ document.getElementById('agreeBtn').addEventListener('click', async () => {
     await chrome.storage.local.set({ termsAccepted: true });
 
     // Notify user and close tab or redirect
-    alert('感謝您的同意！NoMoreScamTW 防護已啟動。');
+    alert('NoMoreScamTW 防護已啟動。');
 
     // Close this tab
     chrome.tabs.getCurrent((tab) => {
