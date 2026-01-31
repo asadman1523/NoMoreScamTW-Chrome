@@ -1,7 +1,7 @@
 const LicenseManager = {
     // Limits
     LIMITS: {
-        FREE_WEB_SCANS: 20,
+        FREE_WEB_SCANS: 100,
         FREE_EMAIL_SCANS: 20
     },
 
