@@ -31,14 +31,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (response && response.success) {
                 msgDiv.textContent = '';
-                alert('🎉 啟用成功！您現在擁有 365 天無限次防護。');
+                const days = response.days || 365;
+                alert(`🎉 啟用成功！您現在擁有 ${days} 天無限次防護。`);
                 updateLicenseStatus();
                 input.value = '';
             } else {
                 msgDiv.textContent = '❌ ' + (response ? response.error : '啟用失敗');
             }
         });
+
     });
+
+    // Buy Button Listener
+    const buyBtn = document.getElementById('buyBtn');
+    if (buyBtn) {
+        buyBtn.addEventListener('click', () => {
+            chrome.tabs.create({ url: 'https://nomorescamtw.web.app/' });
+        });
+    }
 
     function updateLicenseStatus() {
         chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {

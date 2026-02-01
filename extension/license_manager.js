@@ -250,12 +250,17 @@ const LicenseManager = {
             // 3. Activate locally
             this.state.isPremium = true;
             this.state.licenseKey = key;
-            // 365 Days Expiration
-            this.state.expiryDate = Date.now() + (365 * 24 * 60 * 60 * 1000);
+
+            // Calculate Expiration based on Plan
+            let days = 365;
+            if (data.plan === '3yr') days = 1095;
+            if (data.plan === '5yr') days = 1825;
+
+            this.state.expiryDate = Date.now() + (days * 24 * 60 * 60 * 1000);
 
             await this.saveState(); // Saves to Sync too
 
-            return { success: true };
+            return { success: true, days: days, plan: data.plan };
 
         } catch (e) {
             console.error('Activation failed:', e);
