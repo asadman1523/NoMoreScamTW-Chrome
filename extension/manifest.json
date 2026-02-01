@@ -42,6 +42,7 @@
       ],
       "js": [
         "gov_agencies.js",
+        "trusted_domains.js",
         "content.js"
       ]
     },
@@ -51,6 +52,7 @@
       ],
       "js": [
         "gov_agencies.js",
+        "trusted_domains.js",
         "gmail_filter.js"
       ],
       "run_at": "document_idle"

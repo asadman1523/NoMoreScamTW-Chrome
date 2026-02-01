@@ -20,53 +20,108 @@ observer.observe(document.body, {
 });
 
 // Cache verified senders to avoid spamming API
-const verifiedSenders = new Set();
+const verifiedSenders = new Map();
 
+// NOTE: We keep '165' and '反詐騙' in exclusion list to avoid flagging legitimate footers 
+// UNLESS user strxsictly wants them triggered. The user said: 
+// "如果gmail網域 信件內文偵測到政府機關關鍵字 ，則判斷寄件者是不是gov.tw"
+// This implies NO exclusion. If body has '165', and sender is NOT gov.tw -> WARN.
+// So I will empty the exclusion list based on strict interpretation.
+const EXCLUDED_BODY_KEYWORDS = [];
+
+// Split scanning to prevent context pollution
 function scanSender() {
-    // Gmail sender usually has 'email' attribute. 
-    // .gD is common, but we can be broader: span[email]
-    const senders = document.querySelectorAll('span[email]');
+    scanOpenedEmail();
+    scanListEmails();
+}
 
-    if (typeof containsGovKeyword !== 'function') {
-        return;
+function scanOpenedEmail() {
+    // 1. Opened Email View (Single Sender)
+    // Selector: span.gD[email] (Standard for opened email)
+    const openedSender = document.querySelector('span.gD[email]');
+
+    // Get Subject
+    const subjectElem = document.querySelector('h2.hP');
+    const subject = subjectElem ? subjectElem.innerText.replace(/ - Gmail$/, '') : '';
+
+    if (openedSender && !openedSender.getAttribute('data-gov-checked')) {
+        const name = openedSender.name || openedSender.innerText || openedSender.textContent;
+        const email = openedSender.getAttribute('email');
+
+        // Check Name OR Subject
+        const nameMatch = containsGovKeyword(name);
+        // Only check subject if we actually found one
+        const subjectMatch = subject ? containsGovKeyword(subject) : false;
+
+        // Log for debugging
+        // console.log(`[NoMoreScam] Scan Opened: ${name} <${email}> | Subject: ${subject} | Match: ${nameMatch || subjectMatch}`);
+
+        if (nameMatch || subjectMatch) {
+            processGovSender(openedSender, name, email, subject, nameMatch || subjectMatch);
+        }
+
+        // Mark checked even if no match to avoid re-scanning
+        if (!nameMatch && !subjectMatch) {
+            openedSender.setAttribute('data-gov-checked', 'true');
+        }
     }
+}
 
-    senders.forEach(senderElem => {
-        if (senderElem.getAttribute('data-gov-checked') === 'true') return;
+function scanListEmails() {
+    // 2. List View (Inbox Rows)
+    // Selector: tr.zA span[email] (Standard for list items)
+    // We STRICTLY check Name only. Subject is irrelevant/unavailable per row.
+    const listSenders = document.querySelectorAll('tr.zA span[email]:not([data-gov-checked="true"])');
 
+    listSenders.forEach(senderElem => {
         const name = senderElem.name || senderElem.innerText || senderElem.textContent;
         const email = senderElem.getAttribute('email');
 
-        if (!email) return;
+        // Check Name ONLY
+        const nameMatch = containsGovKeyword(name);
 
-        // Check if name contains government agency kywords
-        if (typeof containsGovKeyword === 'function' && containsGovKeyword(name)) {
+        if (nameMatch) {
+            // console.log(`[NoMoreScam] Scan List: ${name} <${email}> | Match: ${nameMatch}`);
+            processGovSender(senderElem, name, email, null, true);
+        } else {
             senderElem.setAttribute('data-gov-checked', 'true');
-
-            // Check cache
-            const cacheKey = `${name}|${email}`;
-            if (verifiedSenders.has(cacheKey)) return;
-
-            console.log(`[NoMoreScam] Found Gov Entity: "${name}" <${email}>. Verifying...`);
-
-            chrome.runtime.sendMessage({
-                action: 'verifyGovEmail',
-                name: name,
-                email: email
-            }, (response) => {
-                if (response && response.success) {
-                    const result = response.result;
-                    verifiedSenders.add(cacheKey);
-
-                    if (result.isScam) {
-                        markGovImpersonation(senderElem, result);
-                    } else {
-                        markGovAuthentic(senderElem, result);
-                    }
-                }
-            });
         }
     });
+}
+
+function processGovSender(senderElem, name, email, subject, isMatch) {
+    senderElem.setAttribute('data-gov-checked', 'true');
+
+    if (!isMatch) return;
+
+    // Check if official domain
+    let isOfficial = email.endsWith('.gov.tw');
+
+    // Exception: Trusted Domain (e.g. ETC -> fetc.net.tw)
+    if (!isOfficial && typeof isTrustedDomain === 'function') {
+        if (isTrustedDomain((name + " " + (subject || "")), email)) {
+            isOfficial = true;
+        }
+    }
+
+    if (isOfficial) {
+        // Official Gov Email - Mark Safe
+        markGovAuthentic(senderElem, {
+            isScam: false,
+            reason: "官方網域驗證 (.gov.tw)"
+        });
+    } else {
+        // NON-Official Domain + Gov Keyword -> SCAM
+        console.log(`[NoMoreScam] IMPERSONATION DETECTED! Name: "${name}" Subject: "${subject || 'N/A'}" <${email}>`);
+
+        // Show Warning
+        markGovImpersonation(senderElem, {
+            isScam: true,
+            confidence: 100,
+            reason: `非官方信箱寄出的政府郵件 (標題/名稱包含關鍵字)`,
+            claimedName: "政府機關 (規則判定)"
+        });
+    }
 }
 
 function scanLinks() {
@@ -142,12 +197,24 @@ function markLink(element, fraudInfo) {
 
 // Mark Impersonation
 function markGovImpersonation(element, result) {
-    element.style.backgroundColor = "rgba(217, 48, 37, 0.2)";
-    element.style.borderBottom = "2px solid #d93025";
-    element.title = `⚠️ 警告：這可能不是官方郵件！\nAI 判定信心: ${result.confidence}%\n理由: ${result.reason}`;
+    // element is usually the sender name span
+    // In opened view, the email is in a sibling .go span
+    const emailPart = element.parentElement ? element.parentElement.querySelector('.go') : null;
+
+    if (emailPart) {
+        // Highlight the email part instead of the name
+        emailPart.style.backgroundColor = "rgba(217, 48, 37, 0.2)";
+        emailPart.style.borderBottom = "2px solid #d93025";
+        emailPart.title = `⚠️ 警告：這可能不是官方郵件！理由: ${result.reason}`;
+    } else {
+        // Fallback: Highlight name if email part not found (e.g. list view)
+        element.style.backgroundColor = "rgba(217, 48, 37, 0.2)";
+        element.style.borderBottom = "2px solid #d93025";
+        element.title = `⚠️ 警告：這可能不是官方郵件！理由: ${result.reason}`;
+    }
 
     const warnBadge = document.createElement('span');
-    warnBadge.innerText = " ⚠️(偽冒??)";
+    warnBadge.innerText = " ⚠️(政府Email應為 .gov.tw)";
     warnBadge.style.color = "#d93025";
     warnBadge.style.fontWeight = "bold";
     warnBadge.style.fontSize = "12px";
@@ -168,10 +235,20 @@ function markGovImpersonation(element, result) {
             banner.style.borderRadius = "4px";
             banner.style.fontWeight = "bold";
             banner.style.textAlign = "center";
-            banner.innerText = `⚠️ 高度警示：此郵件宣稱來自「${result.claimedName}」但非使用官方信箱！請勿輕信！`;
+            banner.innerHTML = `
+                <div>⚠️ 高度警示：此郵件宣稱來自「${result.claimedName}」但非使用官方信箱！請勿輕信！</div>
+                <button class="gov-report-fp-btn" style="margin-top: 5px; background: white; color: #d93025; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;">回報非詐騙 (誤判)</button>
+            `;
 
             // Insert after header or top of body
             emailContainer.prepend(banner);
+
+            // Bind Report Button
+            const btn = banner.querySelector('.gov-report-fp-btn');
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                reportGmailFalsePositive(btn, element);
+            });
         }
     }
 }
@@ -179,7 +256,7 @@ function markGovImpersonation(element, result) {
 // Mark Authentic (Optional, for reassurance)
 function markGovAuthentic(element, result) {
     const safeBadge = document.createElement('span');
-    safeBadge.innerText = " ✅(官方驗證)";
+    safeBadge.innerText = " ✅(此域名已通過麥騙驗證)";
     safeBadge.style.color = "#188038";
     safeBadge.style.fontWeight = "bold";
     safeBadge.style.fontSize = "12px";
@@ -196,26 +273,26 @@ async function scanEmailBody() {
     for (const body of emailBodies) {
         if (body.getAttribute('data-gov-body-checked') === 'true') continue;
 
-        // Check Quota before scanning
-        try {
-            const response = await chrome.runtime.sendMessage({ action: 'checkQuota', type: 'email' });
-            if (!response || !response.canScan) {
-                // Quota Exceeded - Stop processing this batch
-                // console.log('[NoMoreScam] Email Limit Reached'); 
-                return;
-            }
 
-            // Increment Quota (Count this email)
-            chrome.runtime.sendMessage({ action: 'incrementQuota', type: 'email' });
-        } catch (e) {
-            console.error('Quota check failed', e);
-        }
 
         body.setAttribute('data-gov-body-checked', 'true');
 
         const text = body.innerText;
 
         if (typeof containsGovKeyword === 'function' && containsGovKeyword(text)) {
+            // STRICT RULE: If Body contains Gov Keyword -> Check Sender Domain
+            // No exclusions applied as per user request.
+
+            let triggerKeyword = null;
+            if (typeof GOV_AGENCIES !== 'undefined') {
+                for (const agency of GOV_AGENCIES) {
+                    if (text.includes(agency)) {
+                        triggerKeyword = agency;
+                        break;
+                    }
+                }
+            }
+
             // Find the sender for this email. 
             // Structure is usually: .gs (email container) > 
             const container = body.closest('.gs');
@@ -228,16 +305,26 @@ async function scanEmailBody() {
             if (!email) continue;
 
             // Check if sender is gov.tw
-            if (!email.endsWith('.gov.tw')) {
-                console.log(`[NoMoreScam] Detected potentially fake gov email from: ${email}`);
+            let isAllowed = email.endsWith('.gov.tw');
+
+            // Exception: Trusted Domain (e.g. ETC -> fetc.net.tw)
+            if (!isAllowed && typeof isTrustedDomain === 'function') {
+                // Check if the current trigger keyword or text implies a trusted domain
+                if (isTrustedDomain(text, email)) {
+                    isAllowed = true;
+                }
+            }
+
+            if (!isAllowed) {
+                console.log(`[NoMoreScam] Detected potentially fake gov email (Body Match): ${email}`);
                 // Show Warning
-                markGovBodyImpersonation(body, email);
+                markGovBodyImpersonation(body, email, senderElem, triggerKeyword);
             }
         }
     }
 }
 
-function markGovBodyImpersonation(bodyElement, senderEmail) {
+function markGovBodyImpersonation(bodyElement, senderEmail, senderElem, keyword) {
     const container = bodyElement.closest('.gs');
     if (container && !container.querySelector('.gov-impersonation-alert')) {
         const banner = document.createElement('div');
@@ -253,11 +340,58 @@ function markGovBodyImpersonation(bodyElement, senderEmail) {
         banner.style.boxShadow = "0 2px 5px rgba(0,0,0,0.2)";
         banner.innerHTML = `
             <div style="font-size: 1.2em; margin-bottom: 5px;">⚠️ 警告：疑似假冒政府機關郵件</div>
-            <div>此郵件內容包含政府機關關鍵字，但寄件者信箱 (<strong>${senderEmail}</strong>) 並非政府官方網域 (.gov.tw)。</div>
+            <div>此郵件內容包含政府機關關鍵字「<span style="color: #ffeb3b; text-decoration: underline;">${keyword || '未知'}</span>」，但寄件者信箱 (<strong>${senderEmail}</strong>) 並非政府官方網域 (.gov.tw)。</div>
             <div style="margin-top: 5px; font-weight: normal; font-size: 0.9em;">請小心查證，切勿直接提供個資或匯款。</div>
+            <button class="gov-report-fp-btn" style="margin-top: 10px; background: white; color: #d93025; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">回報非詐騙 (誤判)</button>
         `;
 
         // Insert before the body content
         bodyElement.parentNode.insertBefore(banner, bodyElement);
+
+        // Bind Report Button
+        const btn = banner.querySelector('.gov-report-fp-btn');
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            reportGmailFalsePositive(btn, senderElem, bodyElement);
+        });
     }
+}
+
+function reportGmailFalsePositive(btn, senderElem, bodyElem) {
+    btn.disabled = true;
+    btn.textContent = '回報中...';
+
+    // Extract Info
+    const senderName = senderElem ? (senderElem.name || senderElem.innerText) : 'Unknown';
+    const senderEmail = senderElem ? senderElem.getAttribute('email') : 'Unknown';
+
+    // Subject: Try to find h2.hP
+    const subjectElem = document.querySelector('h2.hP');
+    const subject = subjectElem ? subjectElem.innerText : document.title;
+
+    // Snippet (First 200 chars of body)
+    const snippet = bodyElem ? bodyElem.innerText.substring(0, 200) : 'No Content';
+
+    chrome.runtime.sendMessage({
+        action: 'reportFalsePositive',
+        source: 'gmail',
+        data: {
+            sender: `${senderName} <${senderEmail}>`,
+            subject: subject,
+            snippet: snippet
+        }
+    }, (response) => {
+        if (response && response.success) {
+            btn.textContent = '✅ 已回報';
+            btn.style.color = 'green';
+            // Hide banner after delay
+            setTimeout(() => {
+                const banner = btn.closest('.gov-scam-banner') || btn.closest('.gov-impersonation-alert');
+                if (banner) banner.style.display = 'none';
+            }, 2000);
+        } else {
+            btn.textContent = '❌ 失敗';
+            btn.disabled = false;
+        }
+    });
 }

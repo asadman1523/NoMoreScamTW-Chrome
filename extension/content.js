@@ -36,6 +36,9 @@ function showWarning(fraudInfo) {
       </div>
       <button id="fraud-guard-button">立即離開 (回到 Google)</button>
       <button id="fraud-guard-ignore">我了解風險，繼續瀏覽</button>
+      <div style="margin-top: 15px;">
+        <button id="fraud-guard-report" style="background: transparent; border: 1px solid #999; color: #555; font-size: 0.8em; padding: 5px 10px;">回報非詐騙 (誤判)</button>
+      </div>
     </div>
   `;
 
@@ -74,39 +77,53 @@ function showWarning(fraudInfo) {
   });
 
   document.getElementById('fraud-guard-ignore').addEventListener('click', () => {
-    clearInterval(timerId); // Stop redirect
+    clearInterval(timerId);
     document.body.removeChild(overlay);
     document.body.style.overflow = '';
   });
+
+  document.getElementById('fraud-guard-report').addEventListener('click', () => {
+    const btn = document.getElementById('fraud-guard-report');
+    btn.disabled = true;
+    btn.textContent = '回報中...';
+
+    chrome.runtime.sendMessage({
+      action: 'reportFalsePositive',
+      source: 'web',
+      data: {
+        url: window.location.href,
+        title: document.title
+      }
+    }, (response) => {
+      if (response && response.success) {
+        btn.textContent = '✅ 已收到您的回報，我們會儘快審查。';
+        btn.style.color = 'green';
+        btn.style.borderColor = 'green';
+        // Auto close after 2 seconds
+        setTimeout(() => {
+          clearInterval(timerId);
+          document.body.removeChild(overlay);
+          document.body.style.overflow = '';
+        }, 2000);
+      } else {
+        btn.textContent = '❌ 回報失敗';
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
+// Check for Government Impersonation (Title matches Gov keywords but not gov.tw)
 // Check for Government Impersonation (Title matches Gov keywords but not gov.tw)
 function checkGovImpersonation() {
   const title = document.title;
   const hostname = window.location.hostname;
 
   // Skip if already on a gov.tw site
-  // Skip if already on a gov.tw site
   if (hostname.endsWith('.gov.tw')) return;
 
-  // Check Quota (Async) - We fire and forget or wrap in async. 
-  // Since checkGovImpersonation is called by setTimeout/Observer, it can be async.
-  try {
-    chrome.runtime.sendMessage({ action: 'checkQuota', type: 'web' }, (response) => {
-      // Suppress invalid context error
-      if (chrome.runtime.lastError) return;
-
-      if (!response || !response.canScan) {
-        // Quota exceeded
-        return;
-      }
-
-      // ... Proceed with check ...
-      proceedWithGovCheck(title, hostname);
-    });
-  } catch (e) {
-    // Suppress
-  }
+  // Run Local Check Directly (No Quota Needed for Keyword Match)
+  proceedWithGovCheck(title, hostname);
 }
 
 function proceedWithGovCheck(title, hostname) {
@@ -116,6 +133,13 @@ function proceedWithGovCheck(title, hostname) {
 
   // Check if title contains government keywords
   if (typeof containsGovKeyword === 'function' && containsGovKeyword(title)) {
+    // Exception: Trusted Domains (e.g. ETC -> fetc.net.tw)
+    if (typeof isTrustedDomain === 'function') {
+      if (isTrustedDomain(title, hostname)) {
+        return; // Valid trusted site
+      }
+    }
+
     // It's a match! The title claims to be government-related, but the URL is not.
     console.log('MainPage: Government keyword detected in title, but not a gov.tw domain.');
 

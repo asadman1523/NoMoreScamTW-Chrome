@@ -136,6 +136,9 @@ const CONFIG_URL = 'https://cdn.jsdelivr.net/gh/asadman1523/NoMoreScamTW@main/se
 
 
 
+// Helper to yield to event loop
+const yieldToLoop = () => new Promise(resolve => setTimeout(resolve, 0));
+
 async function fetchDataset165027(config) {
     const data = {};
     let rawCount = 0;
@@ -177,7 +180,9 @@ async function fetchDataset165027(config) {
         const jsonList = await response.json();
         console.log(`[DEBUG] 165027 Parsed. Items: ${jsonList.length}`);
 
-        for (const item of jsonList) {
+        // Chunked Processing
+        for (let i = 0; i < jsonList.length; i++) {
+            const item = jsonList[i];
             const domain = item['網域名稱'];
             if (domain) {
                 rawCount++;
@@ -189,6 +194,8 @@ async function fetchDataset165027(config) {
                     endDate: ''
                 };
             }
+            // Yield every 500 items to keep SW responsive
+            if (i % 500 === 0) await yieldToLoop();
         }
         console.log(`[DEBUG] 165027 Processed. Valid Count: ${rawCount}`);
 
@@ -233,8 +240,8 @@ async function fetchDataset176455(config) {
         console.log(`[DEBUG] 176455 Parsed. Lines: ${lines.length}`);
 
         // CSV Header: WEBSITE_NM,WEBURL,CNT,STA_SDATE,STA_EDATE
+        // Chunked Processing
         for (let i = 2; i < lines.length; i++) {
-            // ... same loop ...
             const line = lines[i].trim();
             if (!line) continue;
 
@@ -263,6 +270,8 @@ async function fetchDataset176455(config) {
                     };
                 }
             }
+            // Yield every 500 items logic
+            if (i % 500 === 0) await yieldToLoop();
         }
         console.log(`[DEBUG] 176455 Processed. Valid Count: ${rawCount}`);
     } catch (e) {
@@ -625,8 +634,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return false;
         }
 
-        const { name, email } = request;
-        verifyGovWithAI(name, email)
+        const { name, email, subject } = request;
+        verifyGovWithAI(name, email, subject)
             .then(result => {
                 sendResponse({ success: true, result: result });
             })
@@ -669,6 +678,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         LicenseManager.activateLicense(request.key)
             .then(result => sendResponse(result))
             .catch(err => sendResponse({ success: false, error: err.message }));
+        return true; // Async
+    }
+
+    // 6. Report False Positive
+    if (request.action === 'reportFalsePositive') {
+        const reportData = {
+            type: 'false_positive',
+            source: request.source, // 'web' or 'gmail'
+            timestamp: Date.now(),
+            data: request.data
+        };
+
+        addReportToFirebase(reportData)
+            .then(() => sendResponse({ success: true }))
+            .catch(err => sendResponse({ success: false, error: err.message }));
+
         return true; // Async
     }
 });
