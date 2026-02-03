@@ -236,7 +236,7 @@ function markGovImpersonation(element, result) {
             banner.style.fontWeight = "bold";
             banner.style.textAlign = "center";
             banner.innerHTML = `
-                <div>⚠️ 高度警示：此郵件宣稱來自「${result.claimedName}」但非使用官方信箱！請勿輕信！</div>
+                <div>⚠️ 高度警示：此郵件宣稱來自「${result.claimedName}」但並非使用官方信箱！請勿輕信！</div>
                 <button class="gov-report-fp-btn" style="margin-top: 5px; background: white; color: #d93025; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;">回報非詐騙 (誤判)</button>
             `;
 
