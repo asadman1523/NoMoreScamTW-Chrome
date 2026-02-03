@@ -127,9 +127,9 @@ function checkGovImpersonation() {
 }
 
 function proceedWithGovCheck(title, hostname) {
-  // Skip valid Google domains (Gmail, Search, etc.) to prevent false positives
-  // Gmail has its own dedicated filter (gmail_filter.js)
-  if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com') return;
+  // Skip valid Google domains and Major Social Media to prevent false positives on user-generated content
+  const allowedExact = ['www.facebook.com', 'facebook.com', 'www.instagram.com', 'instagram.com', 'www.youtube.com', 'youtube.com'];
+  if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com' || allowedExact.includes(hostname)) return;
 
   // Check if title contains government keywords
   if (typeof containsGovKeyword === 'function' && containsGovKeyword(title)) {
