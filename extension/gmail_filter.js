@@ -119,7 +119,7 @@ function processGovSender(senderElem, name, email, subject, isMatch) {
             isScam: true,
             confidence: 100,
             reason: `非官方信箱寄出的政府郵件 (標題/名稱包含關鍵字)`,
-            claimedName: "政府機關 (規則判定)"
+            claimedName: "政府機關"
         });
     }
 }
