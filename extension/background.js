@@ -132,7 +132,7 @@ async function getFromIndexedDB(url) {
     });
 }
 
-const CONFIG_URL = 'https://cdn.jsdelivr.net/gh/asadman1523/NoMoreScamTW@main/server_config.json';
+const CONFIG_URL = 'https://gist.githubusercontent.com/asadman1523/bec9509e0032170e0d0786a4a4fe3952/raw/whitelist.json';
 
 
 
@@ -311,6 +311,14 @@ async function updateDatabase(force = false) {
             const configResponse = await fetchWithTimeout(CONFIG_URL, {}, 5000); // 5s timeout for config
             if (configResponse.ok) {
                 config = await configResponse.json();
+
+                // Save Whitelist if present
+                if (config && config.whitelist && Array.isArray(config.whitelist)) {
+                    console.log('Updating Whitelist from Remote:', config.whitelist);
+                    await chrome.storage.local.set({
+                        remoteWhitelist: config.whitelist
+                    });
+                }
             }
         } catch (configError) {
             console.warn('Failed to fetch config, using defaults', configError);

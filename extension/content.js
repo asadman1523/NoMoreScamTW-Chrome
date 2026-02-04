@@ -127,31 +127,39 @@ function checkGovImpersonation() {
 }
 
 function proceedWithGovCheck(title, hostname) {
-  // Skip valid Google domains and Major Social Media to prevent false positives on user-generated content
-  const allowedExact = ['www.facebook.com', 'facebook.com', 'www.instagram.com', 'instagram.com', 'www.youtube.com', 'youtube.com'];
-  if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com' || allowedExact.includes(hostname)) return;
+  // Fetch remote whitelist from storage
+  chrome.storage.local.get('remoteWhitelist', (result) => {
+    let allowedExact = ['www.facebook.com', 'facebook.com', 'www.instagram.com', 'instagram.com', 'www.youtube.com', 'youtube.com'];
 
-  // Check if title contains government keywords
-  if (typeof containsGovKeyword === 'function' && containsGovKeyword(title)) {
-    // Exception: Trusted Domains (e.g. ETC -> fetc.net.tw)
-    if (typeof isTrustedDomain === 'function') {
-      if (isTrustedDomain(title, hostname)) {
-        return; // Valid trusted site
-      }
+    // Merge remote whitelist if available
+    if (result.remoteWhitelist && Array.isArray(result.remoteWhitelist)) {
+      allowedExact = [...new Set([...allowedExact, ...result.remoteWhitelist])];
     }
 
-    // It's a match! The title claims to be government-related, but the URL is not.
-    console.log('MainPage: Government keyword detected in title, but not a gov.tw domain.');
+    if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com' || allowedExact.includes(hostname)) return;
 
-    showWarning({
-      name: '非政府官方網站警告',
-      url: hostname,
-      count: '⚠️',
-      startDate: '偵測到政府機關關鍵字',
-      endDate: '非 gov.tw 網域',
-      isImpersonationCheck: true // Special flag to adjust UI if needed
-    });
-  }
+    // Check if title contains government keywords
+    if (typeof containsGovKeyword === 'function' && containsGovKeyword(title)) {
+      // Exception: Trusted Domains (e.g. ETC -> fetc.net.tw)
+      if (typeof isTrustedDomain === 'function') {
+        if (isTrustedDomain(title, hostname)) {
+          return; // Valid trusted site
+        }
+      }
+
+      // It's a match! The title claims to be government-related, but the URL is not.
+      console.log('MainPage: Government keyword detected in title, but not a gov.tw domain.');
+
+      showWarning({
+        name: '非政府官方網站警告',
+        url: hostname,
+        count: '⚠️',
+        startDate: '偵測到政府機關關鍵字',
+        endDate: '非 gov.tw 網域',
+        isImpersonationCheck: true // Special flag to adjust UI if needed
+      });
+    }
+  });
 }
 
 // Run check on load
