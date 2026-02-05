@@ -25,7 +25,7 @@ function showWarning(fraudInfo) {
       </div>
       <div id="fraud-guard-details" style="text-align: left; margin: 15px 0; font-size: 0.9em; border: 1px solid #ffcccc; padding: 10px; background: #fff0f0;">
         <div><strong>網站名稱：</strong><span id="fg-name"></span></div>
-        <div><strong>回報件數：</strong><span id="fg-count" style="color: #d93025; font-weight: bold;"></span> 件</div>
+        <div id="fg-count-row"><strong>回報件數：</strong><span id="fg-count" style="color: #d93025; font-weight: bold;"></span> 件</div>
         <div><strong>網址：</strong><span id="fg-url"></span></div>
         <div style="font-size: 0.8em; color: #666; margin-top: 5px;">
            統計期間：<span id="fg-sdate"></span> ~ <span id="fg-edate"></span>
@@ -48,7 +48,16 @@ function showWarning(fraudInfo) {
   if (fraudInfo) {
     document.getElementById('fg-name').textContent = fraudInfo.name || '未知';
     document.getElementById('fg-url').textContent = fraudInfo.url || '未知';
-    document.getElementById('fg-count').textContent = fraudInfo.count || '0';
+
+    // Hide Count if Impersonation Check
+    const countRow = document.getElementById('fg-count-row');
+    if (fraudInfo.isImpersonationCheck) {
+      if (countRow) countRow.style.display = 'none';
+    } else {
+      if (countRow) countRow.style.display = 'block';
+      document.getElementById('fg-count').textContent = fraudInfo.count || '0';
+    }
+
     document.getElementById('fg-sdate').textContent = fraudInfo.startDate || '?';
     document.getElementById('fg-edate').textContent = fraudInfo.endDate || '?';
   }

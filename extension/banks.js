@@ -6,7 +6,7 @@ const BANKS = [
     { keywords: ['土地銀行', '土銀', 'Land Bank'], domains: ['landbank.com.tw'] },
     { keywords: ['合作金庫', '合庫', 'TCB'], domains: ['tcb-bank.com.tw'] },
     { keywords: ['第一銀行', '一銀', 'First Bank'], domains: ['firstbank.com.tw'] },
-    { keywords: ['華南銀行', '華銀', 'Hua Nan'], domains: ['hncb.com.tw'] },
+    { keywords: ['華南銀行', 'Hua Nan'], domains: ['hncb.com.tw'] },
     { keywords: ['彰化銀行', '彰銀', 'Chang Hwa'], domains: ['bankchb.com', 'chb.com.tw'] },
     { keywords: ['上海商業儲蓄銀行', '上海商銀', 'SCSB'], domains: ['scsb.com.tw'] },
     { keywords: ['台北富邦', '富邦', 'Fubon'], domains: ['fubon.com'] },
@@ -42,19 +42,49 @@ const BANKS = [
     { keywords: ['樂天銀行', '樂天', 'Rakuten'], domains: ['rakuten-bank.com.tw'] }
 ];
 
+const INSURANCE_COMPANIES = [
+    { keywords: ['兆豐產險', '兆豐產物'], domains: ['cki.com.tw'] },
+    { keywords: ['臺灣產險', '臺灣產物', '台灣產險'], domains: ['tfmi.com.tw'] },
+    { keywords: ['華山產險', '華山產物'], domains: ['tii.org.tw'] }, // Liquidation
+    { keywords: ['富邦產險', '富邦產物'], domains: ['fubon.com'] },
+    { keywords: ['和泰產險', '和泰產物'], domains: ['hotains.com.tw'] },
+    { keywords: ['泰安產險', '泰安產物'], domains: ['taian.com.tw'] },
+    { keywords: ['明台產險', '明台產物', 'MSIG'], domains: ['msig-mingtai.com.tw'] },
+    { keywords: ['南山產險', '南山產物'], domains: ['nanshangeneral.com.tw'] },
+    { keywords: ['第一產險', '第一產物'], domains: ['firstins.com.tw'] },
+    { keywords: ['國華產險', '國華產物'], domains: ['tii.org.tw'] }, // Liquidation
+    { keywords: ['旺旺友聯', '旺旺友聯產險'], domains: ['wwunion.com'] },
+    { keywords: ['華南產險', '華南產物'], domains: ['south-china.com.tw'] },
+    { keywords: ['新光產險', '新光產物'], domains: ['skinsurance.com.tw'] },
+    { keywords: ['國泰世紀產險', '國泰產險'], domains: ['cathayholdings.com'] },
+    { keywords: ['新安東京海上', '新安東京'], domains: ['tmnewa.com.tw'] },
+    { keywords: ['中國信託產險', '中信產險'], domains: ['ctbcins.com'] },
+    { keywords: ['科法斯', 'Coface'], domains: ['coface.com.tw'] },
+    { keywords: ['安達產險', 'Chubb'], domains: ['chubb.com'] },
+    { keywords: ['巴黎產險', 'Cardif'], domains: ['cardif.com.tw'] },
+    { keywords: ['美國國際產險', 'AIG'], domains: ['aig.com.tw'] },
+    { keywords: ['裕利安宜', 'Allianz Trade'], domains: ['allianz-trade.com'] }
+];
+
 /**
- * Checks if the text matches any bank keywords.
- * Returns the matched bank object or null.
+ * Checks if the text matches any bank or insurance keywords.
+ * Returns the matched object with type ('bank' or 'insurance') or null.
  */
 function getBankMatch(text) {
     if (!text) return null;
     const lowerText = text.toLowerCase();
 
     for (const bank of BANKS) {
-        // Check keywords
         if (bank.keywords.some(kw => lowerText.includes(kw.toLowerCase()))) {
-            return bank;
+            return { ...bank, type: 'bank' };
         }
     }
+
+    for (const ins of INSURANCE_COMPANIES) {
+        if (ins.keywords.some(kw => lowerText.includes(kw.toLowerCase()))) {
+            return { ...ins, type: 'insurance' };
+        }
+    }
+
     return null;
 }

@@ -32,7 +32,7 @@ const EXCLUDED_BODY_KEYWORDS = [];
 // Split scanning to prevent context pollution
 function scanSender() {
     scanOpenedEmail();
-    scanListEmails();
+    // scanListEmails(); // Disabled per user request (Don't scan in Inbox)
 }
 
 function scanOpenedEmail() {
@@ -140,6 +140,47 @@ function processGovSender(senderElem, name, email, subject, isMatch) {
         });
 
         // Notify Background: Warning + Badge
+        chrome.runtime.sendMessage({ action: 'incrementStat', statName: 'total_warnings' });
+        chrome.runtime.sendMessage({ action: 'updateBadge', text: '1', color: '#d93025' });
+    }
+}
+
+function processBankSender(senderElem, name, email, subject, bankInfo) {
+    senderElem.setAttribute('data-gov-checked', 'true');
+
+    if (!bankInfo) return;
+
+    // Check if official domain
+    // bankInfo.domains is array e.g. ['ctbcbank.com', 'ctbc.com']
+    // email e.g. 'redacted-41b972db83@example.invalid'
+    const emailDomain = email.split('@')[1];
+    if (!emailDomain) return;
+
+    let isOfficial = bankInfo.domains.some(domain => {
+        return emailDomain === domain || emailDomain.endsWith('.' + domain);
+    });
+
+    if (isOfficial) {
+        // Official Bank Email - Mark Safe (Optional, maybe green check?)
+        markGovAuthentic(senderElem, {
+            isScam: false,
+            reason: "官方網域驗證 (" + bankInfo.domains[0] + ")"
+        });
+    } else {
+        // NON-Official Domain + Bank/Insurance Keyword -> SCAM
+        console.log(`[NoMoreScam] INSTITUTION IMPERSONATION DETECTED! Name: "${name}" <${email}>`);
+
+        const typeLabel = (bankInfo.type === 'insurance') ? '保險公司' : '銀行';
+
+        // Show Warning (Reuse Gov Impersonation UI but with Bank text)
+        markGovImpersonation(senderElem, {
+            isScam: true,
+            confidence: 100,
+            reason: `非官方信箱寄出的${typeLabel}郵件 (標題/名稱包含「${bankInfo.keywords[0]}」)`,
+            claimedName: bankInfo.keywords[0]
+        });
+
+        // Notify Background
         chrome.runtime.sendMessage({ action: 'incrementStat', statName: 'total_warnings' });
         chrome.runtime.sendMessage({ action: 'updateBadge', text: '1', color: '#d93025' });
     }
