@@ -312,12 +312,19 @@ async function updateDatabase(force = false) {
             if (configResponse.ok) {
                 config = await configResponse.json();
 
-                // Save Whitelist if present
+                // Save Whitelist & Brand Rules if present
+                const updates = {};
                 if (config && config.whitelist && Array.isArray(config.whitelist)) {
                     console.log('Updating Whitelist from Remote:', config.whitelist);
-                    await chrome.storage.local.set({
-                        remoteWhitelist: config.whitelist
-                    });
+                    updates.remoteWhitelist = config.whitelist;
+                }
+                if (config && config.brand_rules && Array.isArray(config.brand_rules)) {
+                    console.log('Updating Brand Rules from Remote:', config.brand_rules);
+                    updates.brandRules = config.brand_rules;
+                }
+
+                if (Object.keys(updates).length > 0) {
+                    await chrome.storage.local.set(updates);
                 }
             }
         } catch (configError) {

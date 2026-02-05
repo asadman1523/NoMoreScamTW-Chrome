@@ -160,22 +160,45 @@ function proceedWithGovCheck(title, hostname) {
       });
     }
 
-    // 7-11 Brand Protection Check
-    if (hostname.includes('7-11')) {
-      // Official domain: 7-11.com.tw (and subdomains)
-      // Also allow: myship.7-11.com.tw, no domain like 7-11-vip.com
-      if (!hostname.endsWith('7-11.com.tw')) {
-        console.log('MainPage: 7-11 Impersonation Detected!');
-        showWarning({
-          name: '疑似假冒 7-11 網站',
-          url: hostname,
-          count: '⚠️',
-          startDate: '網域包含 7-11',
-          endDate: '非官方 (7-11.com.tw) 網域',
-          isImpersonationCheck: true
-        });
+    // Brand Protection (Dynamic + Default)
+    const DEFAULT_BRAND_RULES = [
+      { keyword: '7-11', official_domains: ['7-11.com.tw'], name: '7-11' }
+    ];
+
+    chrome.storage.local.get('brandRules', (res) => {
+      let activeRules = DEFAULT_BRAND_RULES;
+
+      // Merge remote rules if valid
+      if (res.brandRules && Array.isArray(res.brandRules)) {
+        // Simple merge: Remote rules added to defaults (deduplication not strictly needed for small sets)
+        activeRules = [...activeRules, ...res.brandRules];
       }
-    }
+
+      // Iterate Rules
+      activeRules.forEach(rule => {
+        if (hostname.includes(rule.keyword)) {
+
+          // Check against official domains
+          // rule.official_domains e.g. ['7-11.com.tw', 'myship.7-11.com.tw']
+          // We basically assume official domains allow subdomains automatically? 
+          // Let's stick to strict endsWith check from before.
+
+          const isSafe = rule.official_domains.some(domain => hostname.endsWith(domain));
+
+          if (!isSafe) {
+            console.log(`MainPage: Brand Impersonation Detected (${rule.name})`);
+            showWarning({
+              name: `疑似假冒 ${rule.name} 網站`,
+              url: hostname,
+              count: '⚠️',
+              startDate: `網域包含 ${rule.keyword}`,
+              endDate: `非官方 (${rule.official_domains[0]}) 網域`,
+              isImpersonationCheck: true
+            });
+          }
+        }
+      });
+    });
   });
 }
 
