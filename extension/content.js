@@ -137,80 +137,89 @@ function checkGovImpersonation() {
 
 function proceedWithGovCheck(title, hostname) {
   // Fetch remote whitelist from storage
-  chrome.storage.local.get('remoteWhitelist', (result) => {
-    let allowedExact = ['www.facebook.com', 'facebook.com', 'www.instagram.com', 'instagram.com', 'www.youtube.com', 'youtube.com'];
+  try {
+    chrome.storage.local.get('remoteWhitelist', (result) => {
+      // Check for runtime error (e.g. context invalidated inside callback)
+      if (chrome.runtime.lastError) {
+        // console.warn('Storage get error:', chrome.runtime.lastError);
+        return;
+      }
+      let allowedExact = ['www.facebook.com', 'facebook.com', 'www.instagram.com', 'instagram.com', 'www.youtube.com', 'youtube.com'];
 
-    // Merge remote whitelist if available
-    if (result.remoteWhitelist && Array.isArray(result.remoteWhitelist)) {
-      allowedExact = [...new Set([...allowedExact, ...result.remoteWhitelist])];
-    }
-
-    if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com' || allowedExact.includes(hostname)) return;
-
-    // Check if title contains government keywords
-    if (typeof containsGovKeyword === 'function' && containsGovKeyword(title)) {
-      // Exception: Trusted Domains (e.g. ETC -> fetc.net.tw)
-      if (typeof isTrustedDomain === 'function') {
-        if (isTrustedDomain(title, hostname)) {
-          return; // Valid trusted site
-        }
+      // Merge remote whitelist if available
+      if (result.remoteWhitelist && Array.isArray(result.remoteWhitelist)) {
+        allowedExact = [...new Set([...allowedExact, ...result.remoteWhitelist])];
       }
 
-      // It's a match! The title claims to be government-related, but the URL is not.
-      console.log('MainPage: Government keyword detected in title, but not a gov.tw domain.');
+      if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com' || allowedExact.includes(hostname)) return;
 
-      showWarning({
-        name: '非政府官方網站警告',
-        url: hostname,
-        count: '⚠️',
-        startDate: '偵測到政府機關關鍵字',
-        endDate: '非 gov.tw 網域',
-        isImpersonationCheck: true // Special flag to adjust UI if needed
-      });
-    }
-
-    // Brand Protection (Dynamic + Default)
-    const DEFAULT_BRAND_RULES = [
-      { keyword: '7-11', official_domains: ['7-11.com.tw'], name: '7-11' }
-    ];
-
-    chrome.storage.local.get('brandRules', (res) => {
-      let activeRules = DEFAULT_BRAND_RULES;
-
-      // Merge remote rules if valid
-      if (res.brandRules && Array.isArray(res.brandRules)) {
-        // Simple merge: Remote rules added to defaults (deduplication not strictly needed for small sets)
-        activeRules = [...activeRules, ...res.brandRules];
-      }
-
-      // Iterate Rules
-      activeRules.forEach(rule => {
-        if (hostname.includes(rule.keyword)) {
-
-          // Check against official domains
-          // rule.official_domains e.g. ['7-11.com.tw', 'myship.7-11.com.tw']
-          // We basically assume official domains allow subdomains automatically? 
-          // Let's stick to strict endsWith check from before.
-
-          const isSafe = rule.official_domains.some(domain => hostname.endsWith(domain));
-
-          if (!isSafe) {
-            console.log(`MainPage: Brand Impersonation Detected (${rule.name})`);
-            showWarning({
-              name: `疑似假冒 ${rule.name} 網站`,
-              url: hostname,
-              count: '⚠️',
-              startDate: `網域包含 ${rule.keyword}`,
-              endDate: `非官方 (${rule.official_domains[0]}) 網域`,
-              isImpersonationCheck: true,
-              customTitle: `警告：非 ${rule.name} 官方網站`,
-              customMessage: `本網站網域包含「${rule.keyword}」，但並非使用 ${rule.name} 官方網域 (${rule.official_domains[0]})。這可能是假冒的網站。`
-            });
+      // Check if title contains government keywords
+      if (typeof containsGovKeyword === 'function' && containsGovKeyword(title)) {
+        // Exception: Trusted Domains (e.g. ETC -> fetc.net.tw)
+        if (typeof isTrustedDomain === 'function') {
+          if (isTrustedDomain(title, hostname)) {
+            return; // Valid trusted site
           }
         }
+
+        // It's a match! The title claims to be government-related, but the URL is not.
+        console.log('MainPage: Government keyword detected in title, but not a gov.tw domain.');
+
+        showWarning({
+          name: '非政府官方網站警告',
+          url: hostname,
+          count: '⚠️',
+          startDate: '偵測到政府機關關鍵字',
+          endDate: '非 gov.tw 網域',
+          isImpersonationCheck: true // Special flag to adjust UI if needed
+        });
+      }
+
+      // Brand Protection (Dynamic + Default)
+      const DEFAULT_BRAND_RULES = [
+        { keyword: '7-11', official_domains: ['7-11.com.tw'], name: '7-11' }
+      ];
+
+      chrome.storage.local.get('brandRules', (res) => {
+        let activeRules = DEFAULT_BRAND_RULES;
+
+        // Merge remote rules if valid
+        if (res.brandRules && Array.isArray(res.brandRules)) {
+          // Simple merge: Remote rules added to defaults (deduplication not strictly needed for small sets)
+          activeRules = [...activeRules, ...res.brandRules];
+        }
+
+        // Iterate Rules
+        activeRules.forEach(rule => {
+          if (hostname.includes(rule.keyword)) {
+
+            // Check against official domains
+            // rule.official_domains e.g. ['7-11.com.tw', 'myship.7-11.com.tw']
+            // We basically assume official domains allow subdomains automatically? 
+            // Let's stick to strict endsWith check from before.
+
+            const isSafe = rule.official_domains.some(domain => hostname.endsWith(domain));
+
+            if (!isSafe) {
+              console.log(`MainPage: Brand Impersonation Detected (${rule.name})`);
+              showWarning({
+                name: `疑似假冒 ${rule.name} 網站`,
+                url: hostname,
+                count: '⚠️',
+                startDate: `網域包含 ${rule.keyword}`,
+                endDate: `非官方 (${rule.official_domains[0]}) 網域`,
+                isImpersonationCheck: true,
+                customTitle: `警告：非 ${rule.name} 官方網站`,
+                customMessage: `本網站網域包含「${rule.keyword}」，但並非使用 ${rule.name} 官方網域 (${rule.official_domains[0]})。這可能是假冒的網站。`
+              });
+            }
+          }
+        });
       });
     });
-  });
+  } catch (e) {
+    // console.log('Extension context invalidated, please refresh the page.');
+  }
 }
 
 // Run check on load

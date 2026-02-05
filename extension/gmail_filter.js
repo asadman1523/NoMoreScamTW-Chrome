@@ -48,7 +48,11 @@ function scanOpenedEmail() {
         // Increment Quota (Once per email view)
         if (!openedSender.getAttribute('data-quota-counted')) {
             openedSender.setAttribute('data-quota-counted', 'true');
-            chrome.runtime.sendMessage({ action: 'incrementQuota', type: 'email' });
+            try {
+                chrome.runtime.sendMessage({ action: 'incrementQuota', type: 'email' });
+            } catch (e) {
+                // Context invalidated
+            }
         }
     }
 
