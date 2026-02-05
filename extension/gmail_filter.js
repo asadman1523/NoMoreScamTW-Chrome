@@ -49,19 +49,23 @@ function scanOpenedEmail() {
         const email = openedSender.getAttribute('email');
 
         // Check Name OR Subject
-        const nameMatch = containsGovKeyword(name);
-        // Only check subject if we actually found one
-        const subjectMatch = subject ? containsGovKeyword(subject) : false;
+        const govMatch = containsGovKeyword(name) || (subject ? containsGovKeyword(subject) : false);
+        let bankMatch = null;
+        if (typeof getBankMatch === 'function') {
+            bankMatch = getBankMatch(name) || (subject ? getBankMatch(subject) : null);
+        }
 
         // Log for debugging
-        // console.log(`[NoMoreScam] Scan Opened: ${name} <${email}> | Subject: ${subject} | Match: ${nameMatch || subjectMatch}`);
+        // console.log(`[NoMoreScam] Scan Opened: ${name} <${email}> | Gov: ${govMatch} | Bank: ${bankMatch}`);
 
-        if (nameMatch || subjectMatch) {
-            processGovSender(openedSender, name, email, subject, nameMatch || subjectMatch);
+        if (govMatch) {
+            processGovSender(openedSender, name, email, subject, true);
+        } else if (bankMatch) {
+            processBankSender(openedSender, name, email, subject, bankMatch);
         }
 
         // Mark checked even if no match to avoid re-scanning
-        if (!nameMatch && !subjectMatch) {
+        if (!govMatch && !bankMatch) {
             openedSender.setAttribute('data-gov-checked', 'true');
         }
     }
@@ -78,11 +82,16 @@ function scanListEmails() {
         const email = senderElem.getAttribute('email');
 
         // Check Name ONLY
-        const nameMatch = containsGovKeyword(name);
+        const govMatch = containsGovKeyword(name);
+        let bankMatch = null;
+        if (typeof getBankMatch === 'function') {
+            bankMatch = getBankMatch(name);
+        }
 
-        if (nameMatch) {
-            // console.log(`[NoMoreScam] Scan List: ${name} <${email}> | Match: ${nameMatch}`);
+        if (govMatch) {
             processGovSender(senderElem, name, email, null, true);
+        } else if (bankMatch) {
+            processBankSender(senderElem, name, email, null, bankMatch);
         } else {
             senderElem.setAttribute('data-gov-checked', 'true');
         }
