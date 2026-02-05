@@ -132,7 +132,7 @@ async function getFromIndexedDB(url) {
     });
 }
 
-const CONFIG_URL = 'https://gist.githubusercontent.com/asadman1523/bec9509e0032170e0d0786a4a4fe3952/raw/whitelist.json';
+const CONFIG_URL = 'https://gist.githubusercontent.com/asadman1523/bec9509e0032170e0d0786a4a4fe3952/raw/gistfile1.txt';
 
 
 
