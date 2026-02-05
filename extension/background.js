@@ -711,4 +711,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         return true; // Async
     }
+
+    // 7. Increment Stat (Internal or from Content Script)
+    if (request.action === 'incrementStat') {
+        incrementStat(request.statName);
+        sendResponse({ success: true });
+        return false;
+    }
+
+    // 8. Update Badge (Visual Warning)
+    if (request.action === 'updateBadge') {
+        chrome.action.setBadgeText({ text: request.text || '' });
+        if (request.color) {
+            chrome.action.setBadgeBackgroundColor({ color: request.color });
+        }
+        sendResponse({ success: true });
+        return false;
+    }
 });

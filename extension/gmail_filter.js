@@ -44,6 +44,14 @@ function scanOpenedEmail() {
     const subjectElem = document.querySelector('h2.hP');
     const subject = subjectElem ? subjectElem.innerText.replace(/ - Gmail$/, '') : '';
 
+    if (openedSender) {
+        // Increment Quota (Once per email view)
+        if (!openedSender.getAttribute('data-quota-counted')) {
+            openedSender.setAttribute('data-quota-counted', 'true');
+            chrome.runtime.sendMessage({ action: 'incrementQuota', type: 'email' });
+        }
+    }
+
     if (openedSender && !openedSender.getAttribute('data-gov-checked')) {
         const name = openedSender.name || openedSender.innerText || openedSender.textContent;
         const email = openedSender.getAttribute('email');
@@ -130,6 +138,10 @@ function processGovSender(senderElem, name, email, subject, isMatch) {
             reason: `非官方信箱寄出的政府郵件 (標題/名稱包含關鍵字)`,
             claimedName: "政府機關"
         });
+
+        // Notify Background: Warning + Badge
+        chrome.runtime.sendMessage({ action: 'incrementStat', statName: 'total_warnings' });
+        chrome.runtime.sendMessage({ action: 'updateBadge', text: '1', color: '#d93025' });
     }
 }
 

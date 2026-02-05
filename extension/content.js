@@ -16,12 +16,12 @@ function showWarning(fraudInfo) {
     <div id="fraud-guard-modal">
       <div id="fraud-guard-icon">⚠️</div>
       <div id="fraud-guard-title">
-        ${fraudInfo.isImpersonationCheck ? '警告：非政府官方網站' : '警告：疑似詐騙網站'}
+        ${fraudInfo.customTitle ? fraudInfo.customTitle : (fraudInfo.isImpersonationCheck ? '警告：非政府官方網站' : '警告：疑似詐騙網站')}
       </div>
       <div id="fraud-guard-message">
-        ${fraudInfo.isImpersonationCheck
+        ${fraudInfo.customMessage ? fraudInfo.customMessage : (fraudInfo.isImpersonationCheck
       ? '本網站標題包含政府機關關鍵字，但並非使用 gov.tw 官方網域。這可能是假冒的政府網站。'
-      : '您正在瀏覽的網站已被政府列為詐騙網站。請立即離開以保護您的財產安全。'}
+      : '您正在瀏覽的網站已被政府列為詐騙網站。請立即離開以保護您的財產安全。')}
       </div>
       <div id="fraud-guard-details" style="text-align: left; margin: 15px 0; font-size: 0.9em; border: 1px solid #ffcccc; padding: 10px; background: #fff0f0;">
         <div><strong>網站名稱：</strong><span id="fg-name"></span></div>
@@ -193,7 +193,9 @@ function proceedWithGovCheck(title, hostname) {
               count: '⚠️',
               startDate: `網域包含 ${rule.keyword}`,
               endDate: `非官方 (${rule.official_domains[0]}) 網域`,
-              isImpersonationCheck: true
+              isImpersonationCheck: true,
+              customTitle: `警告：非 ${rule.name} 官方網站`,
+              customMessage: `本網站網域包含「${rule.keyword}」，但並非使用 ${rule.name} 官方網域 (${rule.official_domains[0]})。這可能是假冒的網站。`
             });
           }
         }
