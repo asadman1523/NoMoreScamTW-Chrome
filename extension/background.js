@@ -554,7 +554,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         }
 
         // Exclude Whitelisted Domains (Save Quota)
-        const whitelist = ['facebook.com', 'www.facebook.com', 'google.com', 'www.google.com', 'youtube.com', 'www.youtube.com', 'instagram.com', 'www.instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'github.com'];
+        const whitelist = ['facebook.com', 'www.facebook.com', 'google.com', 'www.google.com', 'youtube.com', 'www.youtube.com', 'instagram.com', 'www.instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'github.com', 'threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'];
         try {
             // Safe URL Parsing
             const urlObj = new URL(tab.url);
@@ -618,6 +618,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sendResponse(result);
         });
         return true; // Async response
+    }
+
+    // 3. Check License Status (For Premium Features)
+    if (request.action === 'checkLicenseStatus') {
+        LicenseManager.checkLicense().then(isActive => {
+            sendResponse({ isPro: isActive });
+        });
+        return true; // Keep channel open
     }
 
     // 3. AI Analysis & Report (from Popup) - Defined in report_handler.js

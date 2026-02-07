@@ -144,7 +144,7 @@ function proceedWithGovCheck(title, hostname) {
         // console.warn('Storage get error:', chrome.runtime.lastError);
         return;
       }
-      let allowedExact = ['www.facebook.com', 'facebook.com', 'www.instagram.com', 'instagram.com', 'www.youtube.com', 'youtube.com'];
+      let allowedExact = ['www.facebook.com', 'facebook.com', 'www.instagram.com', 'instagram.com', 'www.youtube.com', 'youtube.com', 'threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'];
 
       // Merge remote whitelist if available
       if (result.remoteWhitelist && Array.isArray(result.remoteWhitelist)) {

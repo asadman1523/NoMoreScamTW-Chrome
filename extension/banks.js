@@ -2,7 +2,7 @@
 // Used to identify if a sender might be impersonating a bank.
 
 const BANKS = [
-    { keywords: ['臺灣銀行', '台灣銀行', '臺銀', '台銀', 'Bank of Taiwan'], domains: ['bot.com.tw'] },
+    { keywords: ['臺灣銀行', '台灣銀行', '臺銀', '台銀', 'Bank of Taiwan'], domains: ['bot.com.tw'], exceptions: ['全台銀行', '全臺銀行'] },
     { keywords: ['土地銀行', '土銀', 'Land Bank'], domains: ['landbank.com.tw'] },
     { keywords: ['合作金庫', '合庫', 'TCB'], domains: ['tcb-bank.com.tw'] },
     { keywords: ['第一銀行', '一銀', 'First Bank'], domains: ['firstbank.com.tw'] },
@@ -45,14 +45,12 @@ const BANKS = [
 const INSURANCE_COMPANIES = [
     { keywords: ['兆豐產險', '兆豐產物'], domains: ['cki.com.tw'] },
     { keywords: ['臺灣產險', '臺灣產物', '台灣產險'], domains: ['tfmi.com.tw'] },
-    { keywords: ['華山產險', '華山產物'], domains: ['tii.org.tw'] }, // Liquidation
     { keywords: ['富邦產險', '富邦產物'], domains: ['fubon.com'] },
     { keywords: ['和泰產險', '和泰產物'], domains: ['hotains.com.tw'] },
     { keywords: ['泰安產險', '泰安產物'], domains: ['taian.com.tw'] },
     { keywords: ['明台產險', '明台產物', 'MSIG'], domains: ['msig-mingtai.com.tw'] },
     { keywords: ['南山產險', '南山產物'], domains: ['nanshangeneral.com.tw'] },
     { keywords: ['第一產險', '第一產物'], domains: ['firstins.com.tw'] },
-    { keywords: ['國華產險', '國華產物'], domains: ['tii.org.tw'] }, // Liquidation
     { keywords: ['旺旺友聯', '旺旺友聯產險'], domains: ['wwunion.com'] },
     { keywords: ['華南產險', '華南產物'], domains: ['south-china.com.tw'] },
     { keywords: ['新光產險', '新光產物'], domains: ['skinsurance.com.tw'] },
@@ -74,14 +72,32 @@ function getBankMatch(text) {
     if (!text) return null;
     const lowerText = text.toLowerCase();
 
+    const checkMatch = (item) => {
+        // 1. Basic Keyword Check
+        const hasKeyword = item.keywords.some(kw => lowerText.includes(kw.toLowerCase()));
+        if (!hasKeyword) return false;
+
+        // 2. Exception Check (e.g. avoid matching "全台銀行" for "台銀")
+        if (item.exceptions && item.exceptions.length > 0) {
+            let cleanText = lowerText;
+            item.exceptions.forEach(exc => {
+                cleanText = cleanText.split(exc.toLowerCase()).join('');
+            });
+            // Re-check keywords in prepared text
+            return item.keywords.some(kw => cleanText.includes(kw.toLowerCase()));
+        }
+
+        return true;
+    };
+
     for (const bank of BANKS) {
-        if (bank.keywords.some(kw => lowerText.includes(kw.toLowerCase()))) {
+        if (checkMatch(bank)) {
             return { ...bank, type: 'bank' };
         }
     }
 
     for (const ins of INSURANCE_COMPANIES) {
-        if (ins.keywords.some(kw => lowerText.includes(kw.toLowerCase()))) {
+        if (checkMatch(ins)) {
             return { ...ins, type: 'insurance' };
         }
     }

@@ -399,7 +399,186 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
     }
-    /* Footer Removed
-    // Footer Links Handlers
-    */
+
+    // --- Whitelist Management Logic ---
+
+    const mainView = document.getElementById('mainView');
+    const whitelistView = document.getElementById('whitelistView');
+    const manageBtn = document.getElementById('manageWhitelistBtn');
+    const backBtn = document.getElementById('backToMainBtn');
+    const addBtn = document.getElementById('addWhitelistBtn');
+    const whitelistInput = document.getElementById('whitelistInput');
+    const whitelistContainer = document.getElementById('whitelistContainer');
+    const limitMsg = document.getElementById('whitelistLimitMsg');
+    const fbGroupBtn = document.getElementById('fbGroupBtn');
+
+    // FB Group Link
+    if (fbGroupBtn) {
+        fbGroupBtn.addEventListener('click', () => {
+            chrome.tabs.create({ url: 'https://www.facebook.com/groups/1283784360250717' });
+        });
+    }
+
+    // View Switching
+    manageBtn.addEventListener('click', () => {
+        mainView.style.display = 'none';
+        whitelistView.style.display = 'block';
+        renderWhitelist();
+    });
+
+    backBtn.addEventListener('click', () => {
+        whitelistView.style.display = 'none';
+        mainView.style.display = 'block';
+    });
+
+    // Add Whitelist Entry
+    addBtn.addEventListener('click', () => {
+        const email = whitelistInput.value.trim();
+        if (!email || !email.includes('@')) {
+            alert('請輸入有效的 Email 地址');
+            return;
+        }
+
+        chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {
+            const isPro = stats && stats.isPremium;
+
+            chrome.storage.local.get('userWhitelist', (res) => {
+                let list = res.userWhitelist || [];
+
+                // Limit Check
+                if (!isPro && list.length >= 5) {
+                    alert('免費版只能設定 5 組白名單，請升級以解鎖無限制數量！');
+                    return;
+                }
+
+                if (list.includes(email)) {
+                    alert('此 Email 已經在白名單中了');
+                    return;
+                }
+
+                list.push(email);
+
+                // Save Local
+                chrome.storage.local.set({ userWhitelist: list }, () => {
+                    whitelistInput.value = '';
+                    renderWhitelist();
+                });
+
+                // Sync if Pro
+                if (isPro) {
+                    try {
+                        chrome.storage.sync.get('userWhitelist', (sRes) => {
+                            let sList = sRes.userWhitelist || [];
+                            if (!sList.includes(email)) {
+                                sList.push(email);
+                                chrome.storage.sync.set({ userWhitelist: sList });
+                            }
+                        });
+                    } catch (e) { }
+                }
+            });
+        });
+    });
+
+    // Limit Msg Click Handler
+    if (limitMsg) {
+        limitMsg.addEventListener('click', () => {
+            // Check if it's currently showing an upgrade message
+            if (limitMsg.getAttribute('data-is-link') === 'true') {
+                chrome.tabs.create({ url: 'https://nomorescamtw.web.app/' });
+            }
+        });
+    }
+
+    // Render List
+    function renderWhitelist() {
+        chrome.storage.local.get('userWhitelist', (res) => {
+            const list = res.userWhitelist || [];
+            whitelistContainer.innerHTML = '';
+
+            // Update Limit Msg
+            chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {
+                const isPro = stats && stats.isPremium;
+                if (!isPro) {
+                    limitMsg.textContent = `目前已用: ${list.length} / 5 (升級進階版享無限量)`;
+                    limitMsg.style.color = (list.length >= 5) ? '#d32f2f' : '#fb8c00'; // Make it orange for promotion
+                    limitMsg.style.cursor = 'pointer';
+                    limitMsg.style.textDecoration = 'underline';
+                    limitMsg.setAttribute('data-is-link', 'true');
+                    limitMsg.title = '點擊前往升級頁面';
+
+                    if (list.length >= 5) {
+                        limitMsg.textContent = `目前已用: ${list.length} / 5 (已滿，升級享無限量)`;
+                    }
+                } else {
+                    limitMsg.textContent = `目前數量: ${list.length} (進階版無限制)`;
+                    limitMsg.style.color = '#2e7d32';
+                    limitMsg.style.cursor = 'default';
+                    limitMsg.style.textDecoration = 'none';
+                    limitMsg.removeAttribute('data-is-link');
+                    limitMsg.title = '';
+                }
+            });
+
+            if (list.length === 0) {
+                whitelistContainer.innerHTML = '<li style="padding: 10px; color: #999; text-align: center;">尚未加入任何白名單</li>';
+                return;
+            }
+
+            list.forEach(email => {
+                const li = document.createElement('li');
+                li.style.padding = '10px';
+                li.style.borderBottom = '1px solid #eee';
+                li.style.display = 'flex';
+                li.style.justifyContent = 'space-between';
+                li.style.alignItems = 'center';
+
+                const span = document.createElement('span');
+                span.textContent = email;
+                span.style.fontSize = '14px';
+
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '❌'; // Or trash icon
+                delBtn.style.background = 'transparent';
+                delBtn.style.color = '#d32f2f';
+                delBtn.style.border = 'none';
+                delBtn.style.cursor = 'pointer';
+                delBtn.style.padding = '4px 8px';
+                delBtn.style.fontSize = '12px';
+                delBtn.style.width = 'auto'; // Override default width:100%
+
+                delBtn.onclick = () => {
+                    if (confirm(`確定要移除 ${email} 嗎？`)) {
+                        removeWhitelist(email);
+                    }
+                };
+
+                li.appendChild(span);
+                li.appendChild(delBtn);
+                whitelistContainer.appendChild(li);
+            });
+        });
+    }
+
+    function removeWhitelist(email) {
+        // Remove Local
+        chrome.storage.local.get('userWhitelist', (res) => {
+            let list = res.userWhitelist || [];
+            list = list.filter(e => e !== email);
+            chrome.storage.local.set({ userWhitelist: list }, () => {
+                renderWhitelist();
+            });
+        });
+
+        // Remove Sync (Try best effort)
+        try {
+            chrome.storage.sync.get('userWhitelist', (sRes) => {
+                let sList = sRes.userWhitelist || [];
+                if (sList.includes(email)) {
+                    sList = sList.filter(e => e !== email);
+                    chrome.storage.sync.set({ userWhitelist: sList });
+                }
+            });
+        } catch (e) { }
+    }
 });

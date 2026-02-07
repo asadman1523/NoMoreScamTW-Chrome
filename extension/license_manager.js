@@ -233,11 +233,20 @@ const LicenseManager = {
             if (!data) throw new Error('無效的序號');
             if (data.used) throw new Error('此序號已被使用');
 
-            // 2. Claim the key (Mark as used)
+            // 2. Calculate Expiration
+            const activatedAt = Date.now();
+            let days = 365;
+            if (data.plan === '3yr') days = 1095;
+            if (data.plan === '5yr') days = 1825;
+
+            const expiryDate = activatedAt + (days * 24 * 60 * 60 * 1000);
+
+            // 3. Claim the key (Mark as used with Expiry)
             // Use PATCH to update specific fields
             const updateData = {
                 used: true,
-                activatedAt: Date.now()
+                activatedAt: activatedAt,
+                expiryDate: expiryDate
             };
 
             const writeResponse = await fetch(licensePath, {
@@ -247,20 +256,14 @@ const LicenseManager = {
 
             if (!writeResponse.ok) throw new Error('啟用失敗 (寫入錯誤)');
 
-            // 3. Activate locally
+            // 4. Activate locally
             this.state.isPremium = true;
             this.state.licenseKey = key;
-
-            // Calculate Expiration based on Plan
-            let days = 365;
-            if (data.plan === '3yr') days = 1095;
-            if (data.plan === '5yr') days = 1825;
-
-            this.state.expiryDate = Date.now() + (days * 24 * 60 * 60 * 1000);
+            this.state.expiryDate = expiryDate;
 
             await this.saveState(); // Saves to Sync too
 
-            return { success: true, days: days, plan: data.plan };
+            return { success: true, days: days, plan: data.plan, expiryDate: expiryDate };
 
         } catch (e) {
             console.error('Activation failed:', e);

@@ -45,41 +45,54 @@ function scanOpenedEmail() {
     const subject = subjectElem ? subjectElem.innerText.replace(/ - Gmail$/, '') : '';
 
     if (openedSender) {
-        // Increment Quota (Once per email view)
-        if (!openedSender.getAttribute('data-quota-counted')) {
-            openedSender.setAttribute('data-quota-counted', 'true');
-            try {
-                chrome.runtime.sendMessage({ action: 'incrementQuota', type: 'email' });
-            } catch (e) {
-                // Context invalidated
+        // Logic: Check Quota -> If allowed -> Increment (if new) -> Scan
+        chrome.runtime.sendMessage({ action: 'checkQuota', type: 'email' }, (response) => {
+            if (chrome.runtime.lastError || !response || !response.canScan) {
+                // Quota Exceeded -> Show Promo Banner
+                showQuotaExceededBanner(openedSender);
+                return; // Quota exceeded or error
             }
-        }
-    }
 
-    if (openedSender && !openedSender.getAttribute('data-gov-checked')) {
-        const name = openedSender.name || openedSender.innerText || openedSender.textContent;
-        const email = openedSender.getAttribute('email');
+            // Increment Quota (Once per email view)
+            if (!openedSender.getAttribute('data-quota-counted')) {
+                openedSender.setAttribute('data-quota-counted', 'true');
+                try {
+                    chrome.runtime.sendMessage({ action: 'incrementQuota', type: 'email' });
+                } catch (e) {
+                    // Context invalidated
+                }
+            }
 
-        // Check Name OR Subject
-        const govMatch = containsGovKeyword(name) || (subject ? containsGovKeyword(subject) : false);
-        let bankMatch = null;
-        if (typeof getBankMatch === 'function') {
-            bankMatch = getBankMatch(name) || (subject ? getBankMatch(subject) : null);
-        }
+            if (!openedSender.getAttribute('data-gov-checked')) {
+                const name = openedSender.name || openedSender.innerText || openedSender.textContent;
+                const email = openedSender.getAttribute('email');
 
-        // Log for debugging
-        // console.log(`[NoMoreScam] Scan Opened: ${name} <${email}> | Gov: ${govMatch} | Bank: ${bankMatch}`);
+                // Check Whitelist (Local + Sync)
+                checkUserWhitelist(email, (isWhitelisted) => {
+                    if (isWhitelisted) {
+                        return;
+                    }
 
-        if (govMatch) {
-            processGovSender(openedSender, name, email, subject, true);
-        } else if (bankMatch) {
-            processBankSender(openedSender, name, email, subject, bankMatch);
-        }
+                    // Check Name OR Subject
+                    const govMatch = containsGovKeyword(name) || (subject ? containsGovKeyword(subject) : false);
+                    let bankMatch = null;
+                    if (typeof getBankMatch === 'function') {
+                        bankMatch = getBankMatch(name) || (subject ? getBankMatch(subject) : null);
+                    }
 
-        // Mark checked even if no match to avoid re-scanning
-        if (!govMatch && !bankMatch) {
-            openedSender.setAttribute('data-gov-checked', 'true');
-        }
+                    if (govMatch) {
+                        processGovSender(openedSender, name, email, subject, true);
+                    } else if (bankMatch) {
+                        processBankSender(openedSender, name, email, subject, bankMatch);
+                    }
+
+                    // Mark checked even if no match to avoid re-scanning
+                    if (!govMatch && !bankMatch) {
+                        openedSender.setAttribute('data-gov-checked', 'true');
+                    }
+                });
+            }
+        });
     }
 }
 
@@ -93,20 +106,27 @@ function scanListEmails() {
         const name = senderElem.name || senderElem.innerText || senderElem.textContent;
         const email = senderElem.getAttribute('email');
 
-        // Check Name ONLY
-        const govMatch = containsGovKeyword(name);
-        let bankMatch = null;
-        if (typeof getBankMatch === 'function') {
-            bankMatch = getBankMatch(name);
-        }
+        checkUserWhitelist(email, (isWhitelisted) => {
+            if (isWhitelisted) {
+                senderElem.setAttribute('data-gov-checked', 'true');
+                return;
+            }
 
-        if (govMatch) {
-            processGovSender(senderElem, name, email, null, true);
-        } else if (bankMatch) {
-            processBankSender(senderElem, name, email, null, bankMatch);
-        } else {
-            senderElem.setAttribute('data-gov-checked', 'true');
-        }
+            // Check Name ONLY
+            const govMatch = containsGovKeyword(name);
+            let bankMatch = null;
+            if (typeof getBankMatch === 'function') {
+                bankMatch = getBankMatch(name);
+            }
+
+            if (govMatch) {
+                processGovSender(senderElem, name, email, null, true);
+            } else if (bankMatch) {
+                processBankSender(senderElem, name, email, null, bankMatch);
+            } else {
+                senderElem.setAttribute('data-gov-checked', 'true');
+            }
+        });
     });
 }
 
@@ -280,6 +300,7 @@ function markGovImpersonation(element, result) {
     }
 
     const warnBadge = document.createElement('span');
+    warnBadge.className = 'gov-warn-badge'; // Marked for removal
     warnBadge.innerText = " ⚠️(政府Email應為 .gov.tw)";
     warnBadge.style.color = "#d93025";
     warnBadge.style.fontWeight = "bold";
@@ -303,7 +324,8 @@ function markGovImpersonation(element, result) {
             banner.style.textAlign = "center";
             banner.innerHTML = `
                 <div>⚠️ 高度警示：此郵件宣稱來自「${result.claimedName}」但並非使用官方信箱！請勿輕信！</div>
-                <button class="gov-report-fp-btn" style="margin-top: 5px; background: white; color: #d93025; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;">回報非詐騙 (誤判)</button>
+                <button class="gov-report-fp-btn" style="margin-top: 5px; background: white; color: #d93025; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em; margin-right: 5px;">回報非詐騙 (誤判)</button>
+                <button class="gov-whitelist-btn" style="margin-top: 5px; background: #e8f0fe; color: #1967d2; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;">加入白名單 (不再提醒)</button>
             `;
 
             // Insert after header or top of body
@@ -314,6 +336,13 @@ function markGovImpersonation(element, result) {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 reportGmailFalsePositive(btn, element);
+            });
+
+            // Bind Whitelist Button
+            const whitelistBtn = banner.querySelector('.gov-whitelist-btn');
+            whitelistBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                addToWhitelist(element, whitelistBtn);
             });
         }
     }
@@ -336,58 +365,122 @@ async function scanEmailBody() {
     // Gmail open email body container usually has class 'a3s'
     const emailBodies = document.querySelectorAll('.a3s');
 
-    for (const body of emailBodies) {
-        if (body.getAttribute('data-gov-body-checked') === 'true') continue;
+    // Check Quota before scanning
+    chrome.runtime.sendMessage({ action: 'checkQuota', type: 'email' }, (response) => {
+        if (chrome.runtime.lastError || !response || !response.canScan) {
+            // Quota Exceeded -> Show Promo Banner
+            showQuotaExceededBanner(emailBodies[0]); // Only show once per body scan batch
+            return;
+        }
 
+        for (const body of emailBodies) {
+            if (body.getAttribute('data-gov-body-checked') === 'true') continue;
 
+            body.setAttribute('data-gov-body-checked', 'true');
+            // ... (rest of logic unchanged) ...
 
-        body.setAttribute('data-gov-body-checked', 'true');
+            const text = body.innerText;
 
-        const text = body.innerText;
+            if (typeof containsGovKeyword === 'function' && containsGovKeyword(text)) {
+                // STRICT RULE: If Body contains Gov Keyword -> Check Sender Domain
+                // No exclusions applied as per user request.
 
-        if (typeof containsGovKeyword === 'function' && containsGovKeyword(text)) {
-            // STRICT RULE: If Body contains Gov Keyword -> Check Sender Domain
-            // No exclusions applied as per user request.
-
-            let triggerKeyword = null;
-            if (typeof GOV_AGENCIES !== 'undefined') {
-                for (const agency of GOV_AGENCIES) {
-                    if (text.includes(agency)) {
-                        triggerKeyword = agency;
-                        break;
+                let triggerKeyword = null;
+                if (typeof GOV_AGENCIES !== 'undefined') {
+                    for (const agency of GOV_AGENCIES) {
+                        if (text.includes(agency)) {
+                            triggerKeyword = agency;
+                            break;
+                        }
                     }
                 }
-            }
 
-            // Find the sender for this email. 
-            // Structure is usually: .gs (email container) > 
-            const container = body.closest('.gs');
-            if (!container) continue;
+                // Find the sender for this email. 
+                // Structure is usually: .gs (email container) > 
+                const container = body.closest('.gs');
+                if (!container) continue;
 
-            const senderElem = container.querySelector('.gD');
-            if (!senderElem) continue;
+                const senderElem = container.querySelector('.gD');
+                if (!senderElem) continue;
 
-            const email = senderElem.getAttribute('email');
-            if (!email) continue;
+                const email = senderElem.getAttribute('email');
+                if (!email) continue;
 
-            // Check if sender is gov.tw
-            let isAllowed = email.endsWith('.gov.tw');
+                // Check Whitelist (Async)
+                checkUserWhitelist(email, (isWhitelisted) => {
+                    if (isWhitelisted) {
+                        // console.log(`[NoMoreScam] Whitelisted sender (Body Scan): ${email}`);
+                        return;
+                    }
 
-            // Exception: Trusted Domain (e.g. ETC -> fetc.net.tw)
-            if (!isAllowed && typeof isTrustedDomain === 'function') {
-                // Check if the current trigger keyword or text implies a trusted domain
-                if (isTrustedDomain(text, email)) {
-                    isAllowed = true;
-                }
-            }
+                    // Check if sender is gov.tw
+                    let isAllowed = email.endsWith('.gov.tw');
 
-            if (!isAllowed) {
-                console.log(`[NoMoreScam] Detected potentially fake gov email (Body Match): ${email}`);
-                // Show Warning
-                markGovBodyImpersonation(body, email, senderElem, triggerKeyword);
+                    // Exception: Trusted Domain (e.g. ETC -> fetc.net.tw)
+                    if (!isAllowed && typeof isTrustedDomain === 'function') {
+                        // Check if the current trigger keyword or text implies a trusted domain
+                        if (isTrustedDomain(text, email)) {
+                            isAllowed = true;
+                        }
+                    }
+
+                    if (!isAllowed) {
+                        console.log(`[NoMoreScam] Detected potentially fake gov email (Body Match): ${email}`);
+                        // Show Warning
+                        markGovBodyImpersonation(body, email, senderElem, triggerKeyword);
+                    }
+                });
             }
         }
-    }
+    });
+}
+
+// Show Quota Exceeded Banner (New Function)
+function showQuotaExceededBanner(anchorElement) {
+    if (!anchorElement) return;
+
+    // Use .gs (email container) or .a3s (body) or fallback
+    const emailContainer = anchorElement.closest('.gs') || anchorElement.closest('.a3s');
+    if (!emailContainer) return;
+
+    if (emailContainer.querySelector('.quota-limit-banner')) return; // Already shown
+
+    const banner = document.createElement('div');
+    banner.className = 'quota-limit-banner';
+    banner.style.backgroundColor = "#e8f0fe"; // Light blue
+    banner.style.color = "#1967d2";
+    banner.style.border = "1px solid #d2e3fc";
+    banner.style.padding = "10px 15px";
+    banner.style.margin = "10px 0";
+    banner.style.borderRadius = "8px";
+    banner.style.display = "flex";
+    banner.style.alignItems = "center";
+    banner.style.justifyContent = "space-between";
+    banner.style.fontSize = "14px";
+    banner.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
+
+    banner.innerHTML = `
+        <div style="display: flex; align-items: center;">
+            <span style="font-size: 1.2em; margin-right: 8px;">🛡️</span>
+            <div>
+                <strong>麥騙 - 今日 Email 掃描額度已滿</strong>
+                <div style="font-size: 0.9em; margin-top: 2px; color: #5f6368;">升級進階版，享受無限量 AI 偵測與完整白名單功能。</div>
+            </div>
+        </div>
+        <button class="upgrade-btn" style="background: #1a73e8; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 500;">
+            立即升級
+        </button>
+    `;
+
+    // Insert at the top
+    emailContainer.prepend(banner);
+
+    // Bind Button
+    const btn = banner.querySelector('.upgrade-btn');
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.open('https://nomorescamtw.web.app/', '_blank');
+    });
 }
 
 function markGovBodyImpersonation(bodyElement, senderEmail, senderElem, keyword) {
@@ -408,7 +501,8 @@ function markGovBodyImpersonation(bodyElement, senderEmail, senderElem, keyword)
             <div style="font-size: 1.2em; margin-bottom: 5px;">⚠️ 警告：疑似假冒政府機關郵件</div>
             <div>此郵件內容包含政府機關關鍵字「<span style="color: #ffeb3b; text-decoration: underline;">${keyword || '未知'}</span>」，但寄件者信箱 (<strong>${senderEmail}</strong>) 並非政府官方網域 (.gov.tw)。</div>
             <div style="margin-top: 5px; font-weight: normal; font-size: 0.9em;">請小心查證，切勿直接提供個資或匯款。</div>
-            <button class="gov-report-fp-btn" style="margin-top: 10px; background: white; color: #d93025; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">回報非詐騙 (誤判)</button>
+            <button class="gov-report-fp-btn" style="margin-top: 10px; background: white; color: #d93025; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; margin-right: 5px;">回報非詐騙 (誤判)</button>
+            <button class="gov-whitelist-btn" style="margin-top: 10px; background: #e8f0fe; color: #1967d2; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">加入白名單 (不再提醒)</button>
         `;
 
         // Insert before the body content
@@ -419,6 +513,13 @@ function markGovBodyImpersonation(bodyElement, senderEmail, senderElem, keyword)
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             reportGmailFalsePositive(btn, senderElem, bodyElement);
+        });
+
+        // Bind Whitelist Button (NEW)
+        const whitelistBtn = banner.querySelector('.gov-whitelist-btn');
+        whitelistBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            addToWhitelist(senderElem, whitelistBtn);
         });
     }
 }
@@ -456,8 +557,144 @@ function reportGmailFalsePositive(btn, senderElem, bodyElem) {
                 if (banner) banner.style.display = 'none';
             }, 2000);
         } else {
-            btn.textContent = '❌ 失敗';
             btn.disabled = false;
         }
+    });
+}
+
+// --- Whitelist Helper Functions ---
+
+/**
+ * Checks if email is in user whitelist (Local or Sync).
+ */
+function checkUserWhitelist(email, callback) {
+    if (!email) { callback(false); return; }
+
+    // 1. Check Local
+    chrome.storage.local.get('userWhitelist', (localRes) => {
+        if (localRes.userWhitelist && localRes.userWhitelist.includes(email)) {
+            callback(true);
+            return;
+        }
+
+        // 2. Check Sync (If available)
+        try {
+            chrome.storage.sync.get('userWhitelist', (syncRes) => {
+                if (syncRes.userWhitelist && syncRes.userWhitelist.includes(email)) {
+                    callback(true);
+                } else {
+                    callback(false);
+                }
+            });
+        } catch (e) {
+            callback(false);
+        }
+    });
+}
+
+/**
+ * Adds email to whitelist.
+ * Checks license status to decide whether to save to Sync.
+ */
+function addToWhitelist(senderElem, btn) {
+    if (!senderElem) return;
+
+    if (btn) {
+        // If button is already in upgrade mode, redirect
+        if (btn.getAttribute('data-upgrade-mode') === 'true') {
+            window.open('https://nomorescamtw.web.app/', '_blank');
+            return;
+        }
+
+        btn.textContent = '處理中...';
+        btn.disabled = true;
+    }
+
+    const email = senderElem.getAttribute('email');
+    if (!email) {
+        if (btn) btn.disabled = false;
+        alert('無法取得 Email');
+        return;
+    }
+
+    // Check License Status first
+    chrome.runtime.sendMessage({ action: 'checkLicenseStatus' }, (response) => {
+        let isPro = (response && response.isPro);
+
+        // Update Local (Always)
+        chrome.storage.local.get('userWhitelist', (res) => {
+            let list = res.userWhitelist || [];
+
+            // Check Limit for Free Users
+            if (!isPro && list.length >= 5) {
+                alert('免費版只能設定 5 組白名單，請升級以解鎖無限制數量！');
+                if (btn) {
+                    btn.textContent = '已滿 (升級享無限)';
+                    btn.disabled = false;
+                    btn.style.backgroundColor = '#fce8e6';
+                    btn.style.color = '#c5221f';
+                    btn.style.cursor = 'pointer';
+                    btn.setAttribute('data-upgrade-mode', 'true');
+                    btn.title = '點擊前往升級頁面';
+                }
+                return;
+            }
+
+            if (!list.includes(email)) {
+                list.push(email);
+                chrome.storage.local.set({ userWhitelist: list });
+            }
+
+            // Check Sync if Pro (Confirm with user)
+            if (isPro) {
+                if (confirm(`是否要將 ${email} 同步至雲端白名單？\n(這樣您在其他裝置登入 Chrome 時也能生效)`)) {
+                    try {
+                        chrome.storage.sync.get('userWhitelist', (sRes) => {
+                            let sList = sRes.userWhitelist || [];
+                            if (!sList.includes(email)) {
+                                sList.push(email);
+                                chrome.storage.sync.set({ userWhitelist: sList });
+                            }
+                        });
+                        if (btn) btn.textContent = '✅ 已加入 (含雲端)';
+                    } catch (e) {
+                        if (btn) btn.textContent = '✅ 已加入 (本機)';
+                    }
+                } else {
+                    if (btn) btn.textContent = '✅ 已加入 (本機)';
+                }
+            } else {
+                if (btn) btn.textContent = '✅ 已加入白名單';
+            }
+
+            // UI Feedback (Common)
+            if (btn) {
+                btn.style.backgroundColor = '#e6f4ea';
+                btn.style.color = '#137333';
+
+                setTimeout(() => {
+                    const banner = btn.closest('.gov-scam-banner') || btn.closest('.gov-impersonation-alert');
+                    if (banner) banner.style.display = 'none';
+
+                    // Remove red warning styles
+                    const emailPart = senderElem.parentElement ? senderElem.parentElement.querySelector('.go') : null;
+                    if (emailPart) {
+                        emailPart.style.backgroundColor = '';
+                        emailPart.style.borderBottom = '';
+                        emailPart.title = '';
+                    }
+                    senderElem.style.backgroundColor = '';
+                    senderElem.style.borderBottom = '';
+                    senderElem.title = '';
+
+                    // Remove Warning Badge (Text)
+                    const parent = senderElem.parentNode;
+                    if (parent) {
+                        const badges = parent.querySelectorAll('.gov-warn-badge');
+                        badges.forEach(b => b.remove());
+                    }
+                }, 1500);
+            }
+        });
     });
 }
