@@ -16,6 +16,11 @@ const TRUSTED_DOMAINS = [
         // CPC Corporation, Taiwan
         keywords: ['台灣中油', '中油'],
         domains: ['cpc.com.tw']
+    },
+    {
+        // DigiAT / Fraud Buster (Government Affiliated)
+        keywords: ['數發部', '數位發展部', '詐騙終結者'],
+        domains: ['digiat.org.tw']
     }
 ];
 
@@ -37,8 +42,11 @@ function isTrustedDomain(text, emailOrHostname) {
         const keywordMatch = entry.keywords.some(kw => lowerText.includes(kw.toLowerCase()));
 
         if (keywordMatch) {
-            // 2. If keyword found, check if domain ends with any allowed domain
-            return entry.domains.some(allowed => lowerDomain.endsWith(allowed.toLowerCase()));
+            // 2. If keyword found, check if domain is exact match or a true subdomain
+            return entry.domains.some(allowed => {
+                const target = allowed.toLowerCase();
+                return lowerDomain === target || lowerDomain.endsWith('.' + target);
+            });
         }
         return false;
     });
