@@ -22,6 +22,17 @@ observer.observe(document.body, {
 // Cache verified senders to avoid spamming API
 const verifiedSenders = new Map();
 
+// Local cache for Brand Rules (fetched from storage)
+let brandRules = [];
+
+// Initialize rules from storage
+chrome.storage.local.get('brandRules', (res) => {
+    if (res.brandRules) {
+        brandRules = res.brandRules;
+        console.log('[NoMoreScam] Brand Rules Loaded:', brandRules.length);
+    }
+});
+
 // NOTE: We keep '165' and '反詐騙' in exclusion list to avoid flagging legitimate footers 
 // UNLESS user strxsictly wants them triggered. The user said: 
 // "如果gmail網域 信件內文偵測到政府機關關鍵字 ，則判斷寄件者是不是gov.tw"
@@ -79,15 +90,21 @@ function scanOpenedEmail() {
                     if (typeof getBankMatch === 'function') {
                         bankMatch = getBankMatch(name) || (subject ? getBankMatch(subject) : null);
                     }
+                    let brandMatch = null;
+                    if (typeof getBrandMatch === 'function') {
+                        brandMatch = getBrandMatch(name) || (subject ? getBrandMatch(subject) : null);
+                    }
 
                     if (govMatch) {
                         processGovSender(openedSender, name, email, subject, true);
                     } else if (bankMatch) {
                         processBankSender(openedSender, name, email, subject, bankMatch);
+                    } else if (brandMatch) {
+                        processBrandSender(openedSender, name, email, subject, brandMatch);
                     }
 
                     // Mark checked even if no match to avoid re-scanning
-                    if (!govMatch && !bankMatch) {
+                    if (!govMatch && !bankMatch && !brandMatch) {
                         openedSender.setAttribute('data-gov-checked', 'true');
                     }
                 });
@@ -118,11 +135,17 @@ function scanListEmails() {
             if (typeof getBankMatch === 'function') {
                 bankMatch = getBankMatch(name);
             }
+            let brandMatch = null;
+            if (typeof getBrandMatch === 'function') {
+                brandMatch = getBrandMatch(name);
+            }
 
             if (govMatch) {
                 processGovSender(senderElem, name, email, null, true);
             } else if (bankMatch) {
                 processBankSender(senderElem, name, email, null, bankMatch);
+            } else if (brandMatch) {
+                processBrandSender(senderElem, name, email, null, brandMatch);
             } else {
                 senderElem.setAttribute('data-gov-checked', 'true');
             }
@@ -169,45 +192,51 @@ function processGovSender(senderElem, name, email, subject, isMatch) {
     }
 }
 
-function processBankSender(senderElem, name, email, subject, bankInfo) {
+function processBrandSender(senderElem, name, email, subject, brandInfo) {
     senderElem.setAttribute('data-gov-checked', 'true');
 
-    if (!bankInfo) return;
+    if (!brandInfo) return;
 
-    // Check if official domain
-    // bankInfo.domains is array e.g. ['ctbcbank.com', 'ctbc.com']
-    // email e.g. 'redacted-41b972db83@example.invalid'
     const emailDomain = email.split('@')[1];
     if (!emailDomain) return;
 
-    let isOfficial = bankInfo.domains.some(domain => {
+    let isOfficial = brandInfo.official_domains.some(domain => {
         return emailDomain === domain || emailDomain.endsWith('.' + domain);
     });
 
     if (isOfficial) {
-        // Official Bank Email - Mark Safe (Optional, maybe green check?)
         markGovAuthentic(senderElem, {
             isScam: false,
-            reason: "官方網域驗證 (" + bankInfo.domains[0] + ")"
+            reason: `品牌官方網域驗證 (${brandInfo.official_domains[0]})`
         });
     } else {
-        // NON-Official Domain + Bank/Insurance Keyword -> SCAM
-        console.log(`[NoMoreScam] INSTITUTION IMPERSONATION DETECTED! Name: "${name}" <${email}>`);
+        console.log(`[NoMoreScam] BRAND IMPERSONATION DETECTED! Name: "${name}" <${email}>`);
 
-        const typeLabel = (bankInfo.type === 'insurance') ? '保險公司' : '銀行';
-
-        // Show Warning (Reuse Gov Impersonation UI but with Bank text)
         markGovImpersonation(senderElem, {
             isScam: true,
             confidence: 100,
-            reason: `非官方信箱寄出的${typeLabel}郵件 (標題/名稱包含「${bankInfo.keywords[0]}」)`,
-            claimedName: bankInfo.keywords[0]
+            reason: `非官方信箱寄出的品牌郵件 (包含關鍵字「${brandInfo.keyword}」)`,
+            claimedName: brandInfo.name
         });
 
-        // Notify Background
         chrome.runtime.sendMessage({ action: 'incrementStat', statName: 'total_warnings' });
         chrome.runtime.sendMessage({ action: 'updateBadge', text: '1', color: '#d93025' });
     }
+}
+
+/**
+ * Checks if text matches any brand keywords from remote config.
+ */
+function getBrandMatch(text) {
+    if (!text || !brandRules || brandRules.length === 0) return null;
+    const lowerText = text.toLowerCase();
+
+    for (const rule of brandRules) {
+        if (lowerText.includes(rule.keyword.toLowerCase())) {
+            return rule;
+        }
+    }
+    return null;
 }
 
 function scanLinks() {
