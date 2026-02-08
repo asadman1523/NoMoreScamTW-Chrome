@@ -7,6 +7,7 @@ const DB_VERSION = 1;
 try {
     importScripts('firebase_config.js');
     importScripts('report_handler.js');
+    importScripts('trusted_domains.js'); // Import Trusted Domains
     importScripts('license_manager.js'); // Import License Manager
 } catch (e) {
     console.error('Failed to load scripts', e);
@@ -14,6 +15,7 @@ try {
 
 // Global Cache
 let cachedDatabase = {};
+let cachedRemoteWhitelist = [];
 
 // ... (Existing Firebase Helper) ...
 
@@ -308,7 +310,9 @@ async function updateDatabase(force = false) {
         // 1. Fetch Config Once
         let config = null;
         try {
-            const configResponse = await fetchWithTimeout(CONFIG_URL, {}, 5000); // 5s timeout for config
+            // Add cache-busting timestamp
+            const configUrlWithTs = `${CONFIG_URL}?t=${Date.now()}`;
+            const configResponse = await fetchWithTimeout(configUrlWithTs, {}, 5000); // 5s timeout for config
             if (configResponse.ok) {
                 config = await configResponse.json();
 
@@ -317,6 +321,7 @@ async function updateDatabase(force = false) {
                 if (config && config.whitelist && Array.isArray(config.whitelist)) {
                     console.log('Updating Whitelist from Remote:', config.whitelist);
                     updates.remoteWhitelist = config.whitelist;
+                    cachedRemoteWhitelist = config.whitelist; // Update memory cache
                 }
                 if (config && config.brand_rules && Array.isArray(config.brand_rules)) {
                     console.log('Updating Brand Rules from Remote:', config.brand_rules);
@@ -483,6 +488,146 @@ async function checkUrl(url) {
     }
 }
 
+// RDAP Cache
+const rdapCache = {};
+
+// 檢查網域註冊時間 (RDAP)
+async function checkDomainAge(url) {
+    try {
+        let hostname = '';
+        try {
+            const urlObj = new URL(url);
+            hostname = urlObj.hostname.toLowerCase();
+        } catch (e) {
+            return null;
+        }
+
+        // Skip known major domains or if local whitelist
+        // Note: For comprehensive check, we rely on the caller to filter whitelist first.
+        // But double check here for safety.
+        if (hostname.endsWith('google.com') || hostname.endsWith('facebook.com') || hostname.endsWith('youtube.com')) {
+            return null;
+        }
+
+        // Check Remote Whitelist (Gist)
+        if (cachedRemoteWhitelist.includes(hostname) || cachedRemoteWhitelist.includes('www.' + hostname)) {
+            return null;
+        }
+
+        // Check Static Trusted Domains (trusted_domains.js)
+        if (typeof isTrustedDomain === 'function') {
+            // Note: isTrustedDomain typically checks title too, but here we only have hostname.
+            // We can check if it matches any trusted domain pattern regardless of title.
+            // However, isTrustedDomain(title, hostname) implementation needs to be checked.
+            // Looking at trusted_domains.js, it checks:
+            // if (keywords matches title) AND (hostname matches domain) -> return true
+            // We want: if (hostname matches domain) -> return true (skip RDAP)
+            // Let's create a helper or modify isTrustedDomain?
+            // Actually, for RDAP exemption, we just want to know if the HOSTNAME is in the likely trusted list.
+            // Let's look at TRUSTED_DOMAINS structure.
+            // It is an array of objects { keywords, domains }.
+            // We can iterate TRUSTED_DOMAINS directly if available.
+
+            if (typeof TRUSTED_DOMAINS !== 'undefined') {
+                for (const group of TRUSTED_DOMAINS) {
+                    for (const domain of group.domains) {
+                        if (hostname === domain || hostname.endsWith('.' + domain)) {
+                            return null; // Exempt from RDAP
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check Cache
+        const now = Date.now();
+        if (rdapCache[hostname]) {
+            const cached = rdapCache[hostname];
+            // Cache valid for 24 hours (or maybe longer for old domains?)
+            // Let's say if result was 'safe' (old domain), cache for 7 days.
+            // If result was 'new' (risky), cache for 1 hour to re-check later?
+            // Actually, creation date doesn't change. So we can cache indefinitely or long term.
+            // Only 'error' needs short cache.
+            if (cached.error && (now - cached.timestamp < 3600000)) { // 1 hour for errors
+                return null; // Skip on error
+            }
+            if (!cached.error && (now - cached.timestamp < 7 * 24 * 60 * 60 * 1000)) { // 7 days for valid
+                return cached.result;
+            }
+        }
+
+        // Query RDAP
+        // 1. Determine RDAP Endpoint based on TLD
+        let rdapUrl = `https://rdap.org/domain/${hostname}`;
+
+        if (hostname.endsWith('.tw') || hostname.endsWith('.xn--kpry57d')) { // .tw or .台灣
+            rdapUrl = `https://ccrdap.twnic.tw/tw/domain/${hostname}`;
+        } else if (hostname.endsWith('.com') || hostname.endsWith('.net')) {
+            rdapUrl = `https://rdap.verisign.com/com/v1/domain/${hostname}`;
+        }
+
+        console.log(`[RDAP] Checking: ${hostname} via ${rdapUrl}`);
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+        const response = await fetch(rdapUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            console.warn(`[RDAP] Fetch failed for ${hostname}: ${response.status} ${response.statusText}`);
+            // Cache error to avoid spamming
+            rdapCache[hostname] = { timestamp: now, error: true };
+            return null;
+        }
+
+        const data = await response.json();
+        let creationDate = null;
+
+        // Parse events
+        if (data.events && Array.isArray(data.events)) {
+            const registrationEvent = data.events.find(e => e.eventAction === 'registration' || e.eventAction === 'creation');
+            if (registrationEvent) {
+                creationDate = new Date(registrationEvent.eventDate);
+            }
+        }
+
+        console.log(`[RDAP] Creation Date for ${hostname}:`, creationDate);
+
+        // Fallback: strictly for 'domain' object, sometimes 'events' are at top level
+
+        if (!creationDate) {
+            rdapCache[hostname] = { timestamp: now, error: true }; // Can't parse, treat as error
+            return null;
+        }
+
+        // Calculate Age
+        const ageInMs = now - creationDate.getTime();
+        const ageInDays = ageInMs / (1000 * 60 * 60 * 24);
+
+        let result = null;
+        if (ageInDays < 30) {
+            result = {
+                type: 'newly_registered',
+                name: '疑似新建網站',
+                url: hostname,
+                count: '⚠️',
+                startDate: creationDate.toISOString().split('T')[0], // YYYY-MM-DD
+                endDate: '註冊未滿 30 天',
+                age: Math.floor(ageInDays)
+            };
+        }
+
+        // Cache result (even if null/safe)
+        rdapCache[hostname] = { timestamp: now, result: result, error: false };
+        return result;
+
+    } catch (e) {
+        console.error('RDAP Check Failed', e);
+        return null;
+    }
+}
+
 // 根據上次更新時間排程每日更新
 async function scheduleDailyUpdate(lastUpdatedTime) {
     const baseTime = lastUpdatedTime || Date.now();
@@ -512,7 +657,11 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 chrome.runtime.onStartup.addListener(async () => {
     // Populate cache on startup
-    const { fraudDatabase, lastUpdated, termsAccepted } = await chrome.storage.local.get(['fraudDatabase', 'lastUpdated', 'termsAccepted']);
+    const { fraudDatabase, lastUpdated, termsAccepted, remoteWhitelist } = await chrome.storage.local.get(['fraudDatabase', 'lastUpdated', 'termsAccepted', 'remoteWhitelist']);
+
+    if (remoteWhitelist && Array.isArray(remoteWhitelist)) {
+        cachedRemoteWhitelist = remoteWhitelist;
+    }
 
     if (!termsAccepted) {
         // Optional: Open welcome page every startup if not accepted?
@@ -590,7 +739,31 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 // Content script 可能尚未準備好
             });
         } else {
-            // Increment for scan
+            // 2. Check Domain Age (RDAP) if not in fraud DB
+            // Only perform this check if we have quota and it's a main frame navigation (implied by tabs.onUpdated)
+            // To save resources, maybe only check if NOT a sub-frame? (tab.url is top level)
+
+            try {
+                // Determine if we should check RDAP. 
+                // Maybe limit to 'unknown' sites? For now, check all non-whitelisted.
+                const ageInfo = await checkDomainAge(tab.url);
+                if (ageInfo) {
+                    await LicenseManager.incrementUsage('web'); // Consume quota? Or free? Let's consume.
+                    console.log(`Newly Registered Domain detected: ${tab.url}`, ageInfo);
+
+                    incrementStat('total_warnings');
+
+                    chrome.tabs.sendMessage(tabId, {
+                        action: 'showWarning',
+                        fraudInfo: ageInfo
+                    }).catch(() => { });
+                    return;
+                }
+            } catch (e) {
+                console.error('Domain Age Check Error', e);
+            }
+
+            // Increment for scan (Safe Site)
             await LicenseManager.incrementUsage('web');
         }
     }
