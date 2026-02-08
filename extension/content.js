@@ -204,7 +204,9 @@ function proceedWithGovCheck(title, hostname) {
 
       // Brand Protection (Dynamic + Default)
       const DEFAULT_BRAND_RULES = [
-        { keyword: '7-11', official_domains: ['7-11.com.tw'], name: '7-11' }
+        { keyword: '7-11', official_domains: ['7-11.com.tw'], name: '7-11' },
+        { keyword: 'family', official_domains: ['family.com.tw'], name: '全家便利商店' },
+        { keyword: 'familymart', official_domains: ['family.com.tw'], name: '全家便利商店' }
       ];
 
       chrome.storage.local.get('brandRules', (res) => {
