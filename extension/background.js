@@ -711,6 +711,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 // Skip check for trusted giants
                 return;
             }
+
+            // Check Remote Whitelist (save quota)
+            if (cachedRemoteWhitelist && Array.isArray(cachedRemoteWhitelist)) {
+                const isRemoteWhitelisted = cachedRemoteWhitelist.some(allowed =>
+                    urlObj.hostname === allowed || urlObj.hostname.endsWith('.' + allowed)
+                );
+                if (isRemoteWhitelisted) return;
+            }
         } catch (e) {
             // Invalid URL, skip check
             return;
