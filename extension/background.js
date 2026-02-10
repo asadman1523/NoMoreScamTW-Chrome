@@ -307,6 +307,7 @@ async function updateDatabase(force = false) {
     try {
         console.log('Starting full database update...');
 
+        let gistBlacklist = [];
         // 1. Fetch Config Once
         let config = null;
         try {
@@ -330,6 +331,12 @@ async function updateDatabase(force = false) {
 
                 if (Object.keys(updates).length > 0) {
                     await chrome.storage.local.set(updates);
+                }
+
+                // Process Blacklist (Add to data flow)
+                if (config && config.blacklist && Array.isArray(config.blacklist)) {
+                    console.log('Found Blacklist in Gist:', config.blacklist);
+                    gistBlacklist = config.blacklist;
                 }
             }
         } catch (configError) {
@@ -358,9 +365,25 @@ async function updateDatabase(force = false) {
 
         const data2 = result2.data;
         const data3 = result3.data;
-        const totalRawCount = result2.count + result3.count;
 
-        const mergedData = { ...data2, ...data3 };
+        // Convert Gist Blacklist to Database Format
+        const blacklistData = {};
+        gistBlacklist.forEach(item => {
+            if (item.url) {
+                blacklistData[item.url] = {
+                    name: 'Manual Blacklist',
+                    url: item.url,
+                    count: '⚠️',
+                    startDate: new Date().toISOString().split('T')[0],
+                    endDate: '',
+                    customMessage: item.reason || '疑似詐騙'
+                };
+            }
+        });
+
+        const totalRawCount = result2.count + result3.count + gistBlacklist.length;
+
+        const mergedData = { ...data2, ...data3, ...blacklistData };
         const uniqueEntries = Object.keys(mergedData).length;
 
         if (uniqueEntries === 0) {
