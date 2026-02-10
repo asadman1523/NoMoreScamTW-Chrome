@@ -128,7 +128,10 @@ function showWarning(fraudInfo) {
 
     // Update Reasons
     let reasonText = '';
-    if (fraudInfo.customMessage) {
+    if (fraudInfo.customMessages && Array.isArray(fraudInfo.customMessages)) {
+      fraudInfo.customMessages.forEach(msg => addReason(msg));
+      return; // Added multiple reasons, done.
+    } else if (fraudInfo.customMessage) {
       reasonText = fraudInfo.customMessage;
     } else if (fraudInfo.type === 'newly_registered') {
       const dateStr = fraudInfo.startDate ? ` (註冊日期：${fraudInfo.startDate})` : '';

@@ -370,13 +370,23 @@ async function updateDatabase(force = false) {
         const blacklistData = {};
         gistBlacklist.forEach(item => {
             if (item.url) {
+                let messages = [];
+                if (item.reasons && Array.isArray(item.reasons)) {
+                    messages = item.reasons;
+                } else if (item.reason) {
+                    messages = [item.reason];
+                } else {
+                    messages = ['疑似詐騙'];
+                }
+
                 blacklistData[item.url] = {
                     name: 'Manual Blacklist',
                     url: item.url,
                     count: '⚠️',
                     startDate: new Date().toISOString().split('T')[0],
                     endDate: '',
-                    customMessage: item.reason || '疑似詐騙'
+                    customMessages: messages,
+                    customMessage: messages[0] // Backward compatibility
                 };
             }
         });
