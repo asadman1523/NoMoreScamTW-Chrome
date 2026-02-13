@@ -332,6 +332,10 @@ async function updateDatabase(force = false) {
                     console.log('Updating Email Whitelist from Remote:', config.email_whitelist);
                     updates.remoteEmailWhitelist = config.email_whitelist;
                 }
+                if (config && config.email_blacklist && Array.isArray(config.email_blacklist)) {
+                    console.log('Updating Email Blacklist from Remote:', config.email_blacklist);
+                    updates.remoteEmailBlacklist = config.email_blacklist;
+                }
 
                 if (Object.keys(updates).length > 0) {
                     await chrome.storage.local.set(updates);

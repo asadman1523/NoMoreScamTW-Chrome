@@ -78,35 +78,45 @@ function scanOpenedEmail() {
                 const name = openedSender.name || openedSender.innerText || openedSender.textContent;
                 const email = openedSender.getAttribute('email');
 
-                // Check Whitelist (Local + Sync)
-                checkUserWhitelist(email, (isWhitelisted) => {
-                    if (isWhitelisted) {
+                // 1. Check Remote Blacklist (First!)
+                checkRemoteBlacklist(email, (isBlacklisted) => {
+                    if (isBlacklisted) {
+                        console.log(`[NoMoreScam] Blacklisted Email Detected: ${email}`);
+                        markBlacklistedSender(openedSender, email);
+                        openedSender.setAttribute('data-gov-checked', 'true');
                         return;
                     }
 
-                    // Check Name OR Subject
-                    const govMatch = containsGovKeyword(name) || (subject ? containsGovKeyword(subject) : false);
-                    let bankMatch = null;
-                    if (typeof getBankMatch === 'function') {
-                        bankMatch = getBankMatch(name) || (subject ? getBankMatch(subject) : null);
-                    }
-                    let brandMatch = null;
-                    if (typeof getBrandMatch === 'function') {
-                        brandMatch = getBrandMatch(name) || (subject ? getBrandMatch(subject) : null);
-                    }
+                    // 2. Check Whitelist (Local + Sync)
+                    checkUserWhitelist(email, (isWhitelisted) => {
+                        if (isWhitelisted) {
+                            return;
+                        }
 
-                    if (govMatch) {
-                        processGovSender(openedSender, name, email, subject, true);
-                    } else if (bankMatch) {
-                        processBankSender(openedSender, name, email, subject, bankMatch);
-                    } else if (brandMatch) {
-                        processBrandSender(openedSender, name, email, subject, brandMatch);
-                    }
+                        // Check Name OR Subject
+                        const govMatch = containsGovKeyword(name) || (subject ? containsGovKeyword(subject) : false);
+                        let bankMatch = null;
+                        if (typeof getBankMatch === 'function') {
+                            bankMatch = getBankMatch(name) || (subject ? getBankMatch(subject) : null);
+                        }
+                        let brandMatch = null;
+                        if (typeof getBrandMatch === 'function') {
+                            brandMatch = getBrandMatch(name) || (subject ? getBrandMatch(subject) : null);
+                        }
 
-                    // Mark checked even if no match to avoid re-scanning
-                    if (!govMatch && !bankMatch && !brandMatch) {
-                        openedSender.setAttribute('data-gov-checked', 'true');
-                    }
+                        if (govMatch) {
+                            processGovSender(openedSender, name, email, subject, true);
+                        } else if (bankMatch) {
+                            processBankSender(openedSender, name, email, subject, bankMatch);
+                        } else if (brandMatch) {
+                            processBrandSender(openedSender, name, email, subject, brandMatch);
+                        }
+
+                        // Mark checked even if no match to avoid re-scanning
+                        if (!govMatch && !bankMatch && !brandMatch) {
+                            openedSender.setAttribute('data-gov-checked', 'true');
+                        }
+                    });
                 });
             }
         });
@@ -123,32 +133,40 @@ function scanListEmails() {
         const name = senderElem.name || senderElem.innerText || senderElem.textContent;
         const email = senderElem.getAttribute('email');
 
-        checkUserWhitelist(email, (isWhitelisted) => {
-            if (isWhitelisted) {
+        checkRemoteBlacklist(email, (isBlacklisted) => {
+            if (isBlacklisted) {
+                markBlacklistedSender(senderElem, email, true); // true for list view mode (less intrusive?)
                 senderElem.setAttribute('data-gov-checked', 'true');
                 return;
             }
 
-            // Check Name ONLY
-            const govMatch = containsGovKeyword(name);
-            let bankMatch = null;
-            if (typeof getBankMatch === 'function') {
-                bankMatch = getBankMatch(name);
-            }
-            let brandMatch = null;
-            if (typeof getBrandMatch === 'function') {
-                brandMatch = getBrandMatch(name);
-            }
+            checkUserWhitelist(email, (isWhitelisted) => {
+                if (isWhitelisted) {
+                    senderElem.setAttribute('data-gov-checked', 'true');
+                    return;
+                }
 
-            if (govMatch) {
-                processGovSender(senderElem, name, email, null, true);
-            } else if (bankMatch) {
-                processBankSender(senderElem, name, email, null, bankMatch);
-            } else if (brandMatch) {
-                processBrandSender(senderElem, name, email, null, brandMatch);
-            } else {
-                senderElem.setAttribute('data-gov-checked', 'true');
-            }
+                // Check Name ONLY
+                const govMatch = containsGovKeyword(name);
+                let bankMatch = null;
+                if (typeof getBankMatch === 'function') {
+                    bankMatch = getBankMatch(name);
+                }
+                let brandMatch = null;
+                if (typeof getBrandMatch === 'function') {
+                    brandMatch = getBrandMatch(name);
+                }
+
+                if (govMatch) {
+                    processGovSender(senderElem, name, email, null, true);
+                } else if (bankMatch) {
+                    processBankSender(senderElem, name, email, null, bankMatch);
+                } else if (brandMatch) {
+                    processBrandSender(senderElem, name, email, null, brandMatch);
+                } else {
+                    senderElem.setAttribute('data-gov-checked', 'true');
+                }
+            });
         });
     });
 }
@@ -307,6 +325,57 @@ function markLink(element, fraudInfo) {
 
         emailContainer.insertBefore(banner, emailContainer.firstChild);
         emailContainer.setAttribute('data-scam-banner', 'true');
+    }
+}
+
+function markBlacklistedSender(element, email, isListView = false) {
+    // Highlight the sender
+    const emailPart = element.parentElement ? element.parentElement.querySelector('.go') : null;
+    const target = emailPart || element;
+
+    target.style.backgroundColor = "rgba(217, 48, 37, 0.2)";
+    target.style.borderBottom = "2px solid #d93025";
+    target.title = `⚠️ 危險：此信箱 (${email}) 已被標記為惡意/詐騙來源！`;
+
+    const warnBadge = document.createElement('span');
+    warnBadge.className = 'gov-warn-badge';
+    warnBadge.innerText = " ⛔(黑名單)";
+    warnBadge.style.color = "#d93025";
+    warnBadge.style.fontWeight = "bold";
+    warnBadge.style.fontSize = "12px";
+    warnBadge.style.marginLeft = "5px";
+
+    element.parentNode.insertBefore(warnBadge, element.nextSibling);
+
+    if (!isListView) {
+        // Show Full Banner in Email View
+        const emailContainer = element.closest('.gs') || element.closest('.a3s');
+        if (emailContainer && !emailContainer.querySelector('.blacklist-alert')) {
+            const banner = document.createElement('div');
+            banner.className = 'blacklist-alert';
+            banner.style.backgroundColor = "#d93025";
+            banner.style.color = "white";
+            banner.style.padding = "10px";
+            banner.style.margin = "10px 0";
+            banner.style.borderRadius = "4px";
+            banner.style.fontWeight = "bold";
+            banner.style.textAlign = "center";
+            banner.innerHTML = `
+                 <div style="font-size: 1.2em; margin-bottom: 5px;">⛔ 嚴重警告：此發件人 (${email}) 位於黑名單中！</div>
+                 <div>此信箱已被確認為惡意或詐騙來源，請立即刪除此郵件，切勿點擊連結或回覆。</div>
+                 <button class="gov-whitelist-btn" style="margin-top: 10px; background: white; color: #d93025; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">加入白名單 (解除封鎖)</button>
+             `;
+
+            // Insert after header or top of body
+            emailContainer.prepend(banner);
+
+            // Bind Whitelist Button (In case of false positive)
+            const whitelistBtn = banner.querySelector('.gov-whitelist-btn');
+            whitelistBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                addToWhitelist(element, whitelistBtn);
+            });
+        }
     }
 }
 
@@ -594,6 +663,33 @@ function reportGmailFalsePositive(btn, senderElem, bodyElem) {
 // --- Whitelist Helper Functions ---
 
 /**
+ * Checks if email is in remote blacklist.
+ */
+function checkRemoteBlacklist(email, callback) {
+    if (!email) { callback(false); return; }
+    const emailDomain = email.split('@')[1];
+
+    chrome.storage.local.get(['remoteEmailBlacklist'], (res) => {
+        const list = res.remoteEmailBlacklist;
+        if (list && Array.isArray(list)) {
+            const isBlacklisted = list.some(rule => {
+                if (rule.includes('@') && !rule.startsWith('@')) {
+                    return rule === email; // Exact Email Match
+                } else {
+                    // Domain Match (e.g. "bad.com" or "@bad.com")
+                    const ruleDomain = rule.startsWith('@') ? rule.slice(1) : rule;
+                    if (!emailDomain) return false;
+                    return emailDomain === ruleDomain || emailDomain.endsWith('.' + ruleDomain);
+                }
+            });
+            callback(isBlacklisted);
+        } else {
+            callback(false);
+        }
+    });
+}
+
+/**
  * Checks if email is in user whitelist (Local or Sync).
  */
 function checkUserWhitelist(email, callback) {
@@ -725,7 +821,7 @@ function addToWhitelist(senderElem, btn) {
                 btn.style.color = '#137333';
 
                 setTimeout(() => {
-                    const banner = btn.closest('.gov-scam-banner') || btn.closest('.gov-impersonation-alert');
+                    const banner = btn.closest('.gov-scam-banner') || btn.closest('.gov-impersonation-alert') || btn.closest('.blacklist-alert');
                     if (banner) banner.style.display = 'none';
 
                     // Remove red warning styles
