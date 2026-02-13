@@ -159,14 +159,20 @@ function checkGovImpersonation() {
 }
 
 function proceedWithGovCheck(title, hostname) {
-  // Fetch remote whitelist from storage
+  // Fetch remote whitelist and user domain whitelist from storage
   try {
-    chrome.storage.local.get('remoteWhitelist', (result) => {
-      // Check for runtime error (e.g. context invalidated inside callback)
-      if (chrome.runtime.lastError) {
-        // console.warn('Storage get error:', chrome.runtime.lastError);
-        return;
+    chrome.storage.local.get(['remoteWhitelist', 'userDomainWhitelist'], (result) => {
+      // Check for runtime error
+      if (chrome.runtime.lastError) return;
+
+      // 1. Check User Domain Whitelist
+      if (result.userDomainWhitelist && Array.isArray(result.userDomainWhitelist)) {
+        const isUserWhitelisted = result.userDomainWhitelist.some(allowed =>
+          hostname === allowed || hostname.endsWith('.' + allowed)
+        );
+        if (isUserWhitelisted) return;
       }
+
       let allowedExact = ['www.facebook.com', 'facebook.com', 'www.instagram.com', 'instagram.com', 'www.youtube.com', 'youtube.com', 'threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'];
 
       // Merge remote whitelist if available

@@ -139,8 +139,19 @@
       <h2 style="margin: 0; font-size: 18px; color: #333;">白名單管理</h2>
     </div>
 
+    <div style="margin-bottom: 10px; display: flex; gap: 15px;">
+      <label style="display: flex; align-items: center; cursor: pointer;">
+        <input type="radio" name="whitelistType" value="email" checked>
+        <span style="margin-left: 5px;">Email</span>
+      </label>
+      <label style="display: flex; align-items: center; cursor: pointer;">
+        <input type="radio" name="whitelistType" value="domain">
+        <span style="margin-left: 5px;">網站網域</span>
+      </label>
+    </div>
+
     <div style="margin-bottom: 15px; display: flex; gap: 8px;">
-      <input type="email" id="whitelistInput" placeholder="輸入 Email (例如: user@example.com)"
+      <input type="text" id="whitelistInput" placeholder="輸入 Email (例如: user@example.com)"
         style="flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
       <button id="addWhitelistBtn" style="width: auto; background-color: #4caf50; padding: 0 15px;">新增</button>
     </div>

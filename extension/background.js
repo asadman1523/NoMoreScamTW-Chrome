@@ -328,6 +328,10 @@ async function updateDatabase(force = false) {
                     console.log('Updating Brand Rules from Remote:', config.brand_rules);
                     updates.brandRules = config.brand_rules;
                 }
+                if (config && config.email_whitelist && Array.isArray(config.email_whitelist)) {
+                    console.log('Updating Email Whitelist from Remote:', config.email_whitelist);
+                    updates.remoteEmailWhitelist = config.email_whitelist;
+                }
 
                 if (Object.keys(updates).length > 0) {
                     await chrome.storage.local.set(updates);

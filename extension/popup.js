@@ -411,6 +411,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     const whitelistContainer = document.getElementById('whitelistContainer');
     const limitMsg = document.getElementById('whitelistLimitMsg');
     const fbGroupBtn = document.getElementById('fbGroupBtn');
+    const radioBtns = document.getElementsByName('whitelistType');
+
+    // Current Type (email or domain)
+    let currentType = 'email';
+
+    // Radio Change Handler
+    radioBtns.forEach(btn => {
+        btn.addEventListener('change', (e) => {
+            currentType = e.target.value;
+            whitelistInput.value = '';
+            whitelistInput.placeholder = (currentType === 'email')
+                ? "輸入 Email (例如: user@example.com)"
+                : "輸入網域 (例如: example.com)";
+            renderWhitelist();
+        });
+    });
 
     // FB Group Link
     if (fbGroupBtn) {
@@ -433,17 +449,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Add Whitelist Entry
     addBtn.addEventListener('click', () => {
-        const email = whitelistInput.value.trim();
-        if (!email || !email.includes('@')) {
-            alert('請輸入有效的 Email 地址');
+        const value = whitelistInput.value.trim();
+
+        if (!value) {
+            alert('請輸入內容');
             return;
         }
+
+        if (currentType === 'email') {
+            if (!value.includes('@')) {
+                alert('請輸入有效的 Email 地址');
+                return;
+            }
+        } else {
+            // Domain validation (simple)
+            if (value.includes('http') || value.includes('://')) {
+                alert('請勿包含 http:// 或 https://，僅需輸入網域 (如 example.com)');
+                return;
+            }
+            if (!value.includes('.')) {
+                alert('請輸入有效的網域');
+                return;
+            }
+        }
+
+        const storageKey = (currentType === 'email') ? 'userWhitelist' : 'userDomainWhitelist';
 
         chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {
             const isPro = stats && stats.isPremium;
 
-            chrome.storage.local.get('userWhitelist', (res) => {
-                let list = res.userWhitelist || [];
+            chrome.storage.local.get(storageKey, (res) => {
+                let list = res[storageKey] || [];
 
                 // Limit Check
                 if (!isPro && list.length >= 5) {
@@ -451,15 +487,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
 
-                if (list.includes(email)) {
-                    alert('此 Email 已經在白名單中了');
+                if (list.includes(value)) {
+                    alert('此項目已經在白名單中了');
                     return;
                 }
 
-                list.push(email);
+                list.push(value);
 
                 // Save Local
-                chrome.storage.local.set({ userWhitelist: list }, () => {
+                chrome.storage.local.set({ [storageKey]: list }, () => {
                     whitelistInput.value = '';
                     renderWhitelist();
                 });
@@ -467,11 +503,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // Sync if Pro
                 if (isPro) {
                     try {
-                        chrome.storage.sync.get('userWhitelist', (sRes) => {
-                            let sList = sRes.userWhitelist || [];
-                            if (!sList.includes(email)) {
-                                sList.push(email);
-                                chrome.storage.sync.set({ userWhitelist: sList });
+                        chrome.storage.sync.get(storageKey, (sRes) => {
+                            let sList = sRes[storageKey] || [];
+                            if (!sList.includes(value)) {
+                                sList.push(value);
+                                chrome.storage.sync.set({ [storageKey]: sList });
                             }
                         });
                     } catch (e) { }
@@ -492,15 +528,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Render List
     function renderWhitelist() {
-        chrome.storage.local.get('userWhitelist', (res) => {
-            const list = res.userWhitelist || [];
+        const storageKey = (currentType === 'email') ? 'userWhitelist' : 'userDomainWhitelist';
+
+        chrome.storage.local.get(storageKey, (res) => {
+            const list = res[storageKey] || [];
             whitelistContainer.innerHTML = '';
 
             // Update Limit Msg
             chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {
                 const isPro = stats && stats.isPremium;
                 if (!isPro) {
-                    limitMsg.textContent = `目前已用: ${list.length} / 5 (升級進階版享無限量)`;
+                    limitMsg.textContent = `目前 ${currentType === 'email' ? 'Email' : '網域'} 已用: ${list.length} / 5 (升級進階版享無限量)`;
                     limitMsg.style.color = (list.length >= 5) ? '#d32f2f' : '#fb8c00'; // Make it orange for promotion
                     limitMsg.style.cursor = 'pointer';
                     limitMsg.style.textDecoration = 'underline';
@@ -508,7 +546,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     limitMsg.title = '點擊前往升級頁面';
 
                     if (list.length >= 5) {
-                        limitMsg.textContent = `目前已用: ${list.length} / 5 (已滿，升級享無限量)`;
+                        limitMsg.textContent = `目前 ${currentType === 'email' ? 'Email' : '網域'} 已用: ${list.length} / 5 (已滿，升級享無限量)`;
                     }
                 } else {
                     limitMsg.textContent = `目前數量: ${list.length} (進階版無限制)`;
@@ -521,11 +559,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             if (list.length === 0) {
-                whitelistContainer.innerHTML = '<li style="padding: 10px; color: #999; text-align: center;">尚未加入任何白名單</li>';
+                whitelistContainer.innerHTML = `<li style="padding: 10px; color: #999; text-align: center;">尚未加入任何 ${currentType === 'email' ? 'Email' : '網域'} 白名單</li>`;
                 return;
             }
 
-            list.forEach(email => {
+            list.forEach(item => {
                 const li = document.createElement('li');
                 li.style.padding = '10px';
                 li.style.borderBottom = '1px solid #eee';
@@ -534,7 +572,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 li.style.alignItems = 'center';
 
                 const span = document.createElement('span');
-                span.textContent = email;
+                span.textContent = item;
                 span.style.fontSize = '14px';
 
                 const delBtn = document.createElement('button');
@@ -548,8 +586,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 delBtn.style.width = 'auto'; // Override default width:100%
 
                 delBtn.onclick = () => {
-                    if (confirm(`確定要移除 ${email} 嗎？`)) {
-                        removeWhitelist(email);
+                    const typeLabel = (currentType === 'email') ? 'Email' : '網域';
+                    if (confirm(`確定要移除 ${typeLabel}：${item} 嗎？`)) {
+                        removeWhitelist(item);
                     }
                 };
 
@@ -560,23 +599,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    function removeWhitelist(email) {
+    function removeWhitelist(item) {
+        const storageKey = (currentType === 'email') ? 'userWhitelist' : 'userDomainWhitelist';
+
         // Remove Local
-        chrome.storage.local.get('userWhitelist', (res) => {
-            let list = res.userWhitelist || [];
-            list = list.filter(e => e !== email);
-            chrome.storage.local.set({ userWhitelist: list }, () => {
+        chrome.storage.local.get(storageKey, (res) => {
+            let list = res[storageKey] || [];
+            list = list.filter(e => e !== item);
+            chrome.storage.local.set({ [storageKey]: list }, () => {
                 renderWhitelist();
             });
         });
 
         // Remove Sync (Try best effort)
         try {
-            chrome.storage.sync.get('userWhitelist', (sRes) => {
-                let sList = sRes.userWhitelist || [];
-                if (sList.includes(email)) {
-                    sList = sList.filter(e => e !== email);
-                    chrome.storage.sync.set({ userWhitelist: sList });
+            chrome.storage.sync.get(storageKey, (sRes) => {
+                let sList = sRes[storageKey] || [];
+                if (sList.includes(item)) {
+                    sList = sList.filter(e => e !== item);
+                    chrome.storage.sync.set({ [storageKey]: sList });
                 }
             });
         } catch (e) { }

@@ -17,7 +17,7 @@ const GOV_AGENCIES = [
     '金管會', '銀行局', '證期局', '保險局',
 
     // === 司法/檢調 ===
-    '地檢署', '檢察署', '法院', '地方法院', '高等法院', '最高法院',
+    '地檢署', '檢察署', '地方法院', '高等法院', '最高法院',
     '調查局', '法務部調查局',
 
     // === 公用事業 & 國營 ===
@@ -32,5 +32,41 @@ const GOV_AGENCIES = [
 // Helper to check if text contains any agency name
 function containsGovKeyword(text) {
     if (!text) return false;
-    return GOV_AGENCIES.some(agency => text.includes(agency));
+
+    // Initialize Segmenter for Chinese word boundary checks
+    let segmenter = null;
+
+    return GOV_AGENCIES.some(agency => {
+        // 1. Fast Fail
+        if (!text.includes(agency)) return false;
+
+        // 2. English/Alphanumeric Check (e.g. ETC)
+        if (/^[A-Za-z0-9]+$/.test(agency)) {
+            try {
+                const regex = new RegExp(`\\b${agency}\\b`, 'i');
+                return regex.test(text);
+            } catch (e) {
+                return true; // Fallback
+            }
+        }
+
+        // 3. Short Chinese Check (Length < 3, e.g. 台電, 中油)
+        if (agency.length < 3) {
+            if (!segmenter) {
+                try {
+                    segmenter = new Intl.Segmenter('zh-TW', { granularity: 'word' });
+                } catch (e) {
+                    return true; // Fallback
+                }
+            }
+            const segments = segmenter.segment(text);
+            for (const segment of segments) {
+                if (segment.segment === agency) return true;
+            }
+            return false;
+        }
+
+        // 4. Default for longer Chinese keywords
+        return true;
+    });
 }

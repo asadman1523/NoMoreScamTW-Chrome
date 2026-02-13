@@ -599,11 +599,34 @@ function reportGmailFalsePositive(btn, senderElem, bodyElem) {
 function checkUserWhitelist(email, callback) {
     if (!email) { callback(false); return; }
 
-    // 1. Check Local
-    chrome.storage.local.get('userWhitelist', (localRes) => {
+    // 1. Check Local (User Whitelist & Remote Whitelists)
+    chrome.storage.local.get(['userWhitelist', 'remoteWhitelist', 'remoteEmailWhitelist'], (localRes) => {
+        // User Whitelist
         if (localRes.userWhitelist && localRes.userWhitelist.includes(email)) {
             callback(true);
             return;
+        }
+
+        // Remote Email Whitelist
+        if (localRes.remoteEmailWhitelist && localRes.remoteEmailWhitelist.includes(email)) {
+            // console.log(`[NoMoreScam] Whitelisted by Remote Email List: ${email}`);
+            callback(true);
+            return;
+        }
+
+        // Remote Domain Whitelist
+        if (localRes.remoteWhitelist && Array.isArray(localRes.remoteWhitelist)) {
+            const domain = email.split('@')[1];
+            if (domain) {
+                const isRemoteWhitelisted = localRes.remoteWhitelist.some(allowed =>
+                    domain === allowed || domain.endsWith('.' + allowed)
+                );
+                if (isRemoteWhitelisted) {
+                    // console.log(`[NoMoreScam] Whitelisted by Remote Domain List: ${domain}`);
+                    callback(true);
+                    return;
+                }
+            }
         }
 
         // 2. Check Sync (If available)
