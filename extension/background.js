@@ -17,6 +17,8 @@ try {
 let cachedDatabase = {};
 let cachedRemoteWhitelist = [];
 
+const SAFE_ROOT_DOMAINS = ['bitbucket.org', 'github.com', 'facebook.com', 'instagram.com', 'twitter.com', 'google.com', 'youtube.com', 'line.me'];
+
 // ... (Existing Firebase Helper) ...
 
 // Initialize License Manager on Startup
@@ -187,6 +189,12 @@ async function fetchDataset165027(config) {
             const item = jsonList[i];
             const domain = item['網域名稱'];
             if (domain) {
+                // Safeguard: Skip Root Domains of major platforms
+                if (SAFE_ROOT_DOMAINS.includes(domain.toLowerCase())) {
+                    i++;
+                    continue;
+                }
+
                 rawCount++;
                 data[domain] = {
                     name: 'TWNIC Suspicious Domain', // Default name/description
@@ -262,6 +270,15 @@ async function fetchDataset176455(config) {
                 let url = rawUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
                 if (url) {
+                    // Check logic equivalent
+                    let hostname = url.split('/')[0].toLowerCase();
+                    // Safeguard: Skip if the normalized URL IS exact match of a major platform root domain
+                    if (SAFE_ROOT_DOMAINS.includes(hostname) && hostname === url.toLowerCase()) {
+                        // e.g. "facebook.com" in csv -> skip
+                        // "facebook.com/badpage" -> allow
+                        continue;
+                    }
+
                     rawCount++;
                     data[url] = {
                         name: name,
@@ -387,9 +404,12 @@ async function updateDatabase(force = false) {
                     messages = ['疑似詐騙'];
                 }
 
-                blacklistData[item.url] = {
+                // Clean URL to match checkUrl logic (remove protocol and trailing slash)
+                const cleanKey = item.url.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
+
+                blacklistData[cleanKey] = {
                     name: 'Manual Blacklist',
-                    url: item.url,
+                    url: item.url, // Keep original for display if needed, or use cleanKey
                     count: '⚠️',
                     startDate: new Date().toISOString().split('T')[0],
                     endDate: '',
@@ -440,6 +460,7 @@ async function updateDatabase(force = false) {
 }
 
 // 檢查 URL 是否在資料庫中
+// 檢查 URL 是否在資料庫中
 async function checkUrl(url) {
     try {
         let hostname = '';
@@ -458,68 +479,58 @@ async function checkUrl(url) {
             hostname = cleanUrl.split('/')[0];
         }
 
-        // Use cache if available
-        if (cachedDatabase && Object.keys(cachedDatabase).length > 0) {
-            const checkCache = (key) => cachedDatabase[key] || null;
-
-            // 1. Check Full URL (Clean)
-            let res = checkCache(cleanUrl);
-            if (res) return res;
-
-            // 2. Check Hostname
-            if (cleanUrl !== hostname) {
-                res = checkCache(hostname);
-                if (res) return res;
+        // Helper to check DB/Cache
+        const checkFn = async (key) => {
+            if (cachedDatabase && Object.keys(cachedDatabase).length > 0) {
+                return cachedDatabase[key] || null;
             }
-
-            // 3. WWW variations for Hostname
-            if (hostname.startsWith('www.')) {
-                res = checkCache(hostname.slice(4));
-            } else {
-                res = checkCache('www.' + hostname);
-            }
-            if (res) return res;
-        }
-
-        // Fallback or Initial check from IndexedDB
-        const checkDB = async (key) => {
             try {
                 return await getFromIndexedDB(key);
             } catch (e) { return null; }
         };
 
-        // 1. Check Full URL
-        let result = await checkDB(cleanUrl);
-        if (result) return result;
+        // Generate Candidates (Check exact path and all parent paths)
+        const candidates = new Set();
 
-        // 2. Check Hostname
-        if (cleanUrl !== hostname) {
-            result = await checkDB(hostname);
-            if (result) return result;
-        }
+        const addVariations = (base) => {
+            let current = base;
+            // Limit depth to avoid performance issues
+            for (let i = 0; i < 10; i++) {
+                if (!current) break;
+                candidates.add(current);
+                const lastSlash = current.lastIndexOf('/');
+                if (lastSlash === -1) break;
+                current = current.substring(0, lastSlash);
+            }
+            candidates.add(current); // Ensure root is added
+        };
 
-        // 3. Check w/o 'www.' if present
+        addVariations(cleanUrl);
+
+        // WWW Validations
         if (hostname.startsWith('www.')) {
-            result = await checkDB(hostname.slice(4));
-            if (result) return result;
+            addVariations(cleanUrl.replace(/^www\./, ''));
+        } else {
+            addVariations('www.' + cleanUrl);
         }
 
-        // 4. Check w/ 'www.' if missing
-        if (!hostname.startsWith('www.')) {
-            result = await checkDB('www.' + hostname);
-            if (result) return result;
-        }
-
-        // 5. Check Parent Domain (Simple level)
-        // e.g. sub.example.com -> example.com (if distinct from hostname check)
+        // Parent Domain Check (e.g. sub.example.com -> example.com)
         const parts = hostname.split('.');
         if (parts.length > 2) {
             const parentDomain = parts.slice(1).join('.');
-            // Avoid re-checking if we just stripped www
-            if (parentDomain !== hostname && parentDomain !== hostname.slice(4)) {
-                result = await checkDB(parentDomain);
-                if (result) return result;
+            if (!candidates.has(parentDomain)) {
+                candidates.add(parentDomain);
+                // Check parent domain with/without www?
+                // Usually manual blacklist targets exact domain or subpaths.
+                // This fallback is for main database domain blocks.
             }
+        }
+
+        // Check All Candidates
+        for (const cand of candidates) {
+            if (!cand) continue;
+            const res = await checkFn(cand);
+            if (res) return res;
         }
 
         return null;
@@ -744,7 +755,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         }
 
         // Exclude Whitelisted Domains (Save Quota)
-        const whitelist = ['facebook.com', 'www.facebook.com', 'google.com', 'www.google.com', 'youtube.com', 'www.youtube.com', 'instagram.com', 'www.instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'github.com', 'threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'];
+        const whitelist = ['facebook.com', 'www.facebook.com', 'google.com', 'www.google.com', 'youtube.com', 'www.youtube.com', 'instagram.com', 'www.instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'github.com', 'threads.net', 'www.threads.net', 'threads.com', 'www.threads.com', 'bitbucket.org', 'www.bitbucket.org'];
         try {
             // Safe URL Parsing
             const urlObj = new URL(tab.url);
