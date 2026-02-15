@@ -10,7 +10,6 @@ const observer = new MutationObserver((mutations) => {
     debounceTimer = setTimeout(() => {
         scanLinks();
         scanSender();
-        scanEmailBody();
     }, 1000); // Debounce 1s
 });
 
@@ -504,29 +503,36 @@ async function scanEmailBody() {
                 const email = senderElem.getAttribute('email');
                 if (!email) continue;
 
-                // Check Whitelist (Async)
-                checkUserWhitelist(email, (isWhitelisted) => {
-                    if (isWhitelisted) {
-                        // console.log(`[NoMoreScam] Whitelisted sender (Body Scan): ${email}`);
+                // Check Blacklist first, then Whitelist
+                checkRemoteBlacklist(email, (isBlacklisted) => {
+                    if (isBlacklisted) {
+                        markBlacklistedSender(body, email, true); // Use body warning
                         return;
                     }
 
-                    // Check if sender is gov.tw
-                    let isAllowed = email.endsWith('.gov.tw');
-
-                    // Exception: Trusted Domain (e.g. ETC -> fetc.net.tw)
-                    if (!isAllowed && typeof isTrustedDomain === 'function') {
-                        // Check if the current trigger keyword or text implies a trusted domain
-                        if (isTrustedDomain(text, email)) {
-                            isAllowed = true;
+                    checkUserWhitelist(email, (isWhitelisted) => {
+                        if (isWhitelisted) {
+                            // console.log(`[NoMoreScam] Whitelisted sender (Body Scan): ${email}`);
+                            return;
                         }
-                    }
 
-                    if (!isAllowed) {
-                        console.log(`[NoMoreScam] Detected potentially fake gov email (Body Match): ${email}`);
-                        // Show Warning
-                        markGovBodyImpersonation(body, email, senderElem, triggerKeyword);
-                    }
+                        // Check if sender is gov.tw
+                        let isAllowed = email.endsWith('.gov.tw');
+
+                        // Exception: Trusted Domain (e.g. ETC -> fetc.net.tw)
+                        if (!isAllowed && typeof isTrustedDomain === 'function') {
+                            // Check if the current trigger keyword or text implies a trusted domain
+                            if (isTrustedDomain(text, email)) {
+                                isAllowed = true;
+                            }
+                        }
+
+                        if (!isAllowed) {
+                            console.log(`[NoMoreScam] Detected potentially fake gov email (Body Match): ${email}`);
+                            // Show Warning
+                            markGovBodyImpersonation(body, email, senderElem, triggerKeyword);
+                        }
+                    });
                 });
             }
         }
