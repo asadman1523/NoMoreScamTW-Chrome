@@ -15,6 +15,9 @@ const LicenseManager = {
         emailScansToday: 0
     },
 
+    // Cache of safe domains scanned today (not persisted, resets on daily reset or restart)
+    scannedDomainsToday: new Set(),
+
     initPromise: null,
 
     // Initialize
@@ -100,8 +103,19 @@ const LicenseManager = {
             this.state.lastResetDate = today;
             this.state.webScansToday = 0;
             this.state.emailScansToday = 0;
+            this.scannedDomainsToday.clear();
             this.saveState();
         }
+    },
+
+    // Check if domain was already scanned today (safe result)
+    isDomainScannedToday(hostname) {
+        return this.scannedDomainsToday.has(hostname);
+    },
+
+    // Mark domain as scanned today
+    addScannedDomain(hostname) {
+        if (hostname) this.scannedDomainsToday.add(hostname);
     },
 
     // Save state to storage

@@ -776,11 +776,22 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             return;
         }
 
-        // Check Quota (Web)
-        const canScan = await LicenseManager.canScan('web');
-        if (!canScan) {
-            // Quota exceeded, skip check
-            return;
+        // Extract hostname for domain-level caching
+        let currentHostname = '';
+        try {
+            currentHostname = new URL(tab.url).hostname;
+        } catch (e) { return; }
+
+        // Skip quota check if this domain was already scanned today and was safe
+        const domainAlreadyScanned = LicenseManager.isDomainScannedToday(currentHostname);
+
+        // Check Quota (Web) - skip if domain already scanned
+        if (!domainAlreadyScanned) {
+            const canScan = await LicenseManager.canScan('web');
+            if (!canScan) {
+                // Quota exceeded, skip check
+                return;
+            }
         }
 
         const fraudInfo = await checkUrl(tab.url);
@@ -800,15 +811,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             });
         } else {
             // 2. Check Domain Age (RDAP) if not in fraud DB
-            // Only perform this check if we have quota and it's a main frame navigation (implied by tabs.onUpdated)
-            // To save resources, maybe only check if NOT a sub-frame? (tab.url is top level)
-
             try {
-                // Determine if we should check RDAP. 
-                // Maybe limit to 'unknown' sites? For now, check all non-whitelisted.
                 const ageInfo = await checkDomainAge(tab.url);
                 if (ageInfo) {
-                    await LicenseManager.incrementUsage('web'); // Consume quota? Or free? Let's consume.
+                    await LicenseManager.incrementUsage('web');
                     console.log(`Newly Registered Domain detected: ${tab.url}`, ageInfo);
 
                     incrementStat('total_warnings');
@@ -823,8 +829,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 console.error('Domain Age Check Error', e);
             }
 
-            // Increment for scan (Safe Site)
-            await LicenseManager.incrementUsage('web');
+            // Safe site: only increment if domain not already scanned today
+            if (!domainAlreadyScanned) {
+                await LicenseManager.incrementUsage('web');
+            }
+            LicenseManager.addScannedDomain(currentHostname);
         }
     }
 });
