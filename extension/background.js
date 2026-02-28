@@ -460,7 +460,6 @@ async function updateDatabase(force = false) {
 }
 
 // 檢查 URL 是否在資料庫中
-// 檢查 URL 是否在資料庫中
 async function checkUrl(url) {
     try {
         let hostname = '';
@@ -475,26 +474,55 @@ async function checkUrl(url) {
                 cleanUrl = hostname;
             }
         } catch (e) {
-            // Not a valid URL, treat entire string as key (e.g. user entered email or partial domain)
+            // Not a valid URL, treat entire string as key
             hostname = cleanUrl.split('/')[0];
+        }
+
+        const hostnameNoWww = hostname.startsWith('www.') ? hostname.substring(4) : hostname;
+
+        // 1. Check User Whitelist First
+        const { userDomainWhitelist } = await chrome.storage.local.get('userDomainWhitelist');
+        if (userDomainWhitelist && Array.isArray(userDomainWhitelist)) {
+            const isUserWhitelisted = userDomainWhitelist.some(allowed =>
+                hostname === allowed || hostname.endsWith('.' + allowed) ||
+                hostnameNoWww === allowed || hostnameNoWww.endsWith('.' + allowed)
+            );
+            if (isUserWhitelisted) {
+                console.log(`[NoMoreScam] Whitelisted by User: ${url}`);
+                return null;
+            }
+        }
+
+        // 2. Check Remote Whitelist
+        if (typeof cachedRemoteWhitelist !== 'undefined' && Array.isArray(cachedRemoteWhitelist)) {
+            const isRemoteWhitelisted = cachedRemoteWhitelist.some(allowed =>
+                hostname === allowed || hostname.endsWith('.' + allowed) ||
+                hostnameNoWww === allowed || hostnameNoWww.endsWith('.' + allowed)
+            );
+            if (isRemoteWhitelisted) {
+                console.log(`[NoMoreScam] Whitelisted by Remote: ${url}`);
+                return null;
+            }
         }
 
         // Helper to check DB/Cache
         const checkFn = async (key) => {
-            if (cachedDatabase && Object.keys(cachedDatabase).length > 0) {
+            if (typeof cachedDatabase !== 'undefined' && Object.keys(cachedDatabase).length > 0) {
                 return cachedDatabase[key] || null;
             }
             try {
-                return await getFromIndexedDB(key);
+                if (typeof getFromIndexedDB !== 'undefined') {
+                    return await getFromIndexedDB(key);
+                }
             } catch (e) { return null; }
+            return null;
         };
 
-        // Generate Candidates (Check exact path and all parent paths)
+        // Generate Candidates
         const candidates = new Set();
 
         const addVariations = (base) => {
             let current = base;
-            // Limit depth to avoid performance issues
             for (let i = 0; i < 10; i++) {
                 if (!current) break;
                 candidates.add(current);
@@ -502,28 +530,30 @@ async function checkUrl(url) {
                 if (lastSlash === -1) break;
                 current = current.substring(0, lastSlash);
             }
-            candidates.add(current); // Ensure root is added
+            candidates.add(current);
         };
 
         addVariations(cleanUrl);
 
-        // WWW Validations
         if (hostname.startsWith('www.')) {
             addVariations(cleanUrl.replace(/^www\./, ''));
         } else {
             addVariations('www.' + cleanUrl);
         }
 
-        // Parent Domain Check (e.g. sub.example.com -> example.com)
         const parts = hostname.split('.');
         if (parts.length > 2) {
             const parentDomain = parts.slice(1).join('.');
             if (!candidates.has(parentDomain)) {
                 candidates.add(parentDomain);
-                // Check parent domain with/without www?
-                // Usually manual blacklist targets exact domain or subpaths.
-                // This fallback is for main database domain blocks.
             }
+        }
+
+        // 3. Generate Wildcard Candidates (e.g. *.kr, *.com.tw)
+        const noWwwParts = hostnameNoWww.split('.');
+        for (let i = 0; i < noWwwParts.length - 1; i++) {
+            const wildcard = '*.' + noWwwParts.slice(i + 1).join('.');
+            candidates.add(wildcard);
         }
 
         // Check All Candidates
