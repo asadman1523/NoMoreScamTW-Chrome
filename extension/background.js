@@ -365,7 +365,7 @@ async function updateDatabase(force = false) {
                 }
             }
         } catch (configError) {
-            console.warn('Failed to fetch config, using defaults', configError);
+            console.warn('Failed to fetch config from Gist, using defaults', configError);
         }
 
         // Parallel fetch with timeout wrapper
