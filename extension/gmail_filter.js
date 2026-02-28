@@ -77,18 +77,18 @@ function scanOpenedEmail() {
                 const name = openedSender.name || openedSender.innerText || openedSender.textContent;
                 const email = openedSender.getAttribute('email');
 
-                // 1. Check Remote Blacklist (First!)
-                checkRemoteBlacklist(email, (isBlacklisted) => {
-                    if (isBlacklisted) {
-                        console.log(`[NoMoreScam] Blacklisted Email Detected: ${email}`);
-                        markBlacklistedSender(openedSender, email);
-                        openedSender.setAttribute('data-gov-checked', 'true');
+                // 1. Check Whitelist (Local + Sync) first!
+                checkUserWhitelist(email, (isWhitelisted) => {
+                    if (isWhitelisted) {
                         return;
                     }
 
-                    // 2. Check Whitelist (Local + Sync)
-                    checkUserWhitelist(email, (isWhitelisted) => {
-                        if (isWhitelisted) {
+                    // 2. Check Remote Blacklist
+                    checkRemoteBlacklist(email, (isBlacklisted) => {
+                        if (isBlacklisted) {
+                            console.log(`[NoMoreScam] Blacklisted Email Detected: ${email}`);
+                            markBlacklistedSender(openedSender, email);
+                            openedSender.setAttribute('data-gov-checked', 'true');
                             return;
                         }
 
@@ -132,15 +132,15 @@ function scanListEmails() {
         const name = senderElem.name || senderElem.innerText || senderElem.textContent;
         const email = senderElem.getAttribute('email');
 
-        checkRemoteBlacklist(email, (isBlacklisted) => {
-            if (isBlacklisted) {
-                markBlacklistedSender(senderElem, email, true); // true for list view mode (less intrusive?)
+        checkUserWhitelist(email, (isWhitelisted) => {
+            if (isWhitelisted) {
                 senderElem.setAttribute('data-gov-checked', 'true');
                 return;
             }
 
-            checkUserWhitelist(email, (isWhitelisted) => {
-                if (isWhitelisted) {
+            checkRemoteBlacklist(email, (isBlacklisted) => {
+                if (isBlacklisted) {
+                    markBlacklistedSender(senderElem, email, true); // true for list view mode (less intrusive?)
                     senderElem.setAttribute('data-gov-checked', 'true');
                     return;
                 }
@@ -504,15 +504,15 @@ async function scanEmailBody() {
                 if (!email) continue;
 
                 // Check Blacklist first, then Whitelist
-                checkRemoteBlacklist(email, (isBlacklisted) => {
-                    if (isBlacklisted) {
-                        markBlacklistedSender(body, email, true); // Use body warning
+                checkUserWhitelist(email, (isWhitelisted) => {
+                    if (isWhitelisted) {
+                        // console.log(`[NoMoreScam] Whitelisted sender (Body Scan): ${email}`);
                         return;
                     }
 
-                    checkUserWhitelist(email, (isWhitelisted) => {
-                        if (isWhitelisted) {
-                            // console.log(`[NoMoreScam] Whitelisted sender (Body Scan): ${email}`);
+                    checkRemoteBlacklist(email, (isBlacklisted) => {
+                        if (isBlacklisted) {
+                            markBlacklistedSender(body, email, true); // Use body warning
                             return;
                         }
 

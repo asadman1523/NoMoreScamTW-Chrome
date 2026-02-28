@@ -561,8 +561,13 @@ async function checkDomainAge(url) {
             return null;
         }
 
-        // Check Remote Whitelist (Gist)
-        if (cachedRemoteWhitelist.includes(hostname) || cachedRemoteWhitelist.includes('www.' + hostname)) {
+        // Check Remote Whitelist (Gist) AND User Domain Whitelist
+        const { userDomainWhitelist } = await chrome.storage.local.get('userDomainWhitelist');
+        const isUserWhitelisted = userDomainWhitelist && Array.isArray(userDomainWhitelist) && userDomainWhitelist.some(allowed =>
+            hostname === allowed || hostname.endsWith('.' + allowed)
+        );
+
+        if (isUserWhitelisted || cachedRemoteWhitelist.includes(hostname) || cachedRemoteWhitelist.includes('www.' + hostname)) {
             return null;
         }
 
@@ -764,7 +769,17 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 return;
             }
 
-            // Check Remote Whitelist (save quota)
+            // Check User Whitelist AND Remote Whitelist (save quota)
+            const { userDomainWhitelist } = await chrome.storage.local.get('userDomainWhitelist');
+
+            // Check User Whitelist First
+            if (userDomainWhitelist && Array.isArray(userDomainWhitelist)) {
+                const isUserWhitelisted = userDomainWhitelist.some(allowed =>
+                    urlObj.hostname === allowed || urlObj.hostname.endsWith('.' + allowed)
+                );
+                if (isUserWhitelisted) return;
+            }
+
             if (cachedRemoteWhitelist && Array.isArray(cachedRemoteWhitelist)) {
                 const isRemoteWhitelisted = cachedRemoteWhitelist.some(allowed =>
                     urlObj.hostname === allowed || urlObj.hostname.endsWith('.' + allowed)
