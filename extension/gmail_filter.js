@@ -668,9 +668,6 @@ function reportGmailFalsePositive(btn, senderElem, bodyElem) {
 
 // --- Whitelist Helper Functions ---
 
-/**
- * Checks if email is in remote blacklist.
- */
 function checkRemoteBlacklist(email, callback) {
     if (!email) { callback(false); return; }
     const emailDomain = email.split('@')[1];
@@ -679,13 +676,28 @@ function checkRemoteBlacklist(email, callback) {
         const list = res.remoteEmailBlacklist;
         if (list && Array.isArray(list)) {
             const isBlacklisted = list.some(rule => {
-                if (rule.includes('@') && !rule.startsWith('@')) {
-                    return rule === email; // Exact Email Match
-                } else {
-                    // Domain Match (e.g. "bad.com" or "@bad.com")
-                    const ruleDomain = rule.startsWith('@') ? rule.slice(1) : rule;
-                    if (!emailDomain) return false;
-                    return emailDomain === ruleDomain || emailDomain.endsWith('.' + ruleDomain);
+                try {
+                    // 1. 如果是標準的正則表示式 (例如 "/.*\\.kr$/i" 或 "/.*\\.kr$/")
+                    if (rule.startsWith('/')) {
+                        const match = rule.match(/^\/(.+)\/([a-z]*)$/);
+                        if (match) {
+                            const regex = new RegExp(match[1], match[2] || 'i');
+                            return regex.test(email);
+                        }
+                    }
+
+                    // 2. 支援萬用字元轉換 (例如 "*.kr" 或 "admin@*.com")
+                    // 將 . 等特殊字元轉義，並將 * 轉換為 .*
+                    const escapedRule = rule.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+                    const regexStr = "^" + escapedRule.replace(/\*/g, '.*') + "$";
+                    const regex = new RegExp(regexStr, 'i');
+
+                    // 測試完整 email 或 domain
+                    return regex.test(email) || (emailDomain && regex.test(emailDomain));
+                } catch (e) {
+                    console.error("[NoMoreScam] Invalid email blacklist rule:", rule, e);
+                    // 退回普通的字串包含比對作為容錯
+                    return email.includes(rule);
                 }
             });
             callback(isBlacklisted);
