@@ -296,6 +296,6 @@ LicenseManager.init().catch(console.error);
 chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
     if (notificationId === 'limit-reached' && buttonIndex === 0) {
         // Open Upgrade Link
-        chrome.tabs.create({ url: 'https://example.invalid/retired-payment' });
+        chrome.tabs.create({ url: 'https://nomorescamtw.web.app/' });
     }
 });
