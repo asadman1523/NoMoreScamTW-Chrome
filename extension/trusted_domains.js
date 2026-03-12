@@ -1,6 +1,18 @@
 // List of Trusted Civilian/Semi-Government Domains
 // Helper to allow exceptions for known safe domains that use government keywords.
 
+// List of major news portals and social platforms that frequently report on "ETC" or other government keywords
+// Including these globally prevents false positives when reading news
+const GLOBAL_TRUSTED_NEWS_DOMAINS = [
+    'yahoo.com', 'google.com', 'msn.com', 'ettoday.net', 'ltn.com.tw', 
+    'chinatimes.com', 'cna.com.tw', 'ftvnews.com.tw', 'setn.com', 
+    'tvbs.com.tw', 'udn.com', 'storm.mg', 'mirrormedia.mg', 'upmedia.mg', 
+    'newtalk.tw', 'nownews.com', 'pts.org.tw', 'ctv.com.tw', 'ttv.com.tw', 
+    'cts.com.tw', 'rti.org.tw', 'hk01.com', 'epochtimes.com', 'ntdtv.com',
+    'cw.com.tw', 'businesstoday.com.tw', 'bnext.com.tw', 'techbang.com',
+    'mobile01.com', 'ptt.cc', 'dcard.tw', 'disp.cc', 'tw.news.yahoo.com'
+];
+
 const TRUSTED_DOMAINS = [
     {
         // ETC / Far Eastern Electronic Toll Collection
@@ -36,6 +48,11 @@ function isTrustedDomain(text, emailOrHostname) {
     // Normalize inputs for case-insensitive check
     const lowerText = text.toLowerCase();
     const lowerDomain = emailOrHostname.toLowerCase();
+
+    // 0. Fast fail for globally trusted news/social domains
+    if (GLOBAL_TRUSTED_NEWS_DOMAINS.some(domain => lowerDomain === domain || lowerDomain.endsWith('.' + domain))) {
+        return true;
+    }
 
     return TRUSTED_DOMAINS.some(entry => {
         // 1. Check if any keyword matches the text
