@@ -1,10 +1,46 @@
 document.addEventListener('DOMContentLoaded', async () => {
     const statusDiv = document.getElementById('status');
+    const reportScamBtn = document.getElementById('reportScamBtn');
+    const reportStatus = document.getElementById('reportStatus');
     // const updateBtn = document.getElementById('updateBtn');
 
     // Load initial status
     updateStatus();
     updateLicenseStatus(); // New: Check License
+
+    // Detect if we are on Gmail
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs.length === 0) return;
+        const currentUrl = tabs[0].url;
+        let isGmail = false;
+        try {
+            const urlObj = new URL(currentUrl);
+            if (urlObj.hostname === 'mail.google.com') {
+                isGmail = true;
+            }
+        } catch(e) {}
+
+        if (isGmail) {
+            reportScamBtn.textContent = '🚨 回報為詐騙郵件';
+        } else {
+            reportScamBtn.textContent = '🚨 回報此網站詐騙';
+        }
+
+        reportScamBtn.addEventListener('click', () => {
+            reportScamBtn.disabled = true;
+            reportStatus.textContent = '✅ 已送出至雲端自動進行安全分析！';
+            reportStatus.style.display = 'block';
+            reportStatus.style.color = '#2e7d32';
+
+            chrome.runtime.sendMessage({
+                action: 'reportToAI',
+                url: currentUrl,
+                isGmail: isGmail
+            }, (response) => {
+                // 不需特別處理，因為我們不再等待 AI 判斷回合
+            });
+        });
+    });
 
     /*
     document.getElementById('updateBtn').addEventListener('click', () => {

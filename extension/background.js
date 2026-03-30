@@ -885,6 +885,20 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 // popup 的訊息監聽器
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'reportToAI') {
+        const FIREBASE_PROJECT_ID = 'nomorescamtw'; // Known project ID
+        const functionUrl = `https://us-central1-${FIREBASE_PROJECT_ID}.cloudfunctions.net/analyzeReport`;
+        
+        // Notify Firebase Function without awaiting response
+        fetch(functionUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: request.url, isGmail: request.isGmail })
+        }).catch(err => console.error('reportToAI fetch error:', err));
+        
+        sendResponse({ success: true, message: '已送出回報' });
+        return true;
+    }
     // 1. Update Database
     if (request.action === 'updateDatabase' || request.action === 'forceUpdate') {
         const force = (request.action === 'forceUpdate');
