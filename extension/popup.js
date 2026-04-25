@@ -483,9 +483,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainView.style.display = 'block';
     });
 
+    function normalizeDomainWhitelistValue(value) {
+        return String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/^https?:\/\//, '')
+            .split('/')[0]
+            .replace(/^www\./, '');
+    }
+
     // Add Whitelist Entry
     addBtn.addEventListener('click', () => {
-        const value = whitelistInput.value.trim();
+        const rawValue = whitelistInput.value.trim();
+        const value = currentType === 'email' ? rawValue : normalizeDomainWhitelistValue(rawValue);
 
         if (!value) {
             alert('請輸入內容');
@@ -499,7 +509,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         } else {
             // Domain validation (simple)
-            if (value.includes('http') || value.includes('://')) {
+            if (rawValue.includes('http') || rawValue.includes('://')) {
                 alert('請勿包含 http:// 或 https://，僅需輸入網域 (如 example.com)');
                 return;
             }
@@ -523,7 +533,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
 
-                if (list.includes(value)) {
+                const alreadyExists = currentType === 'email'
+                    ? list.includes(value)
+                    : list.some(item => normalizeDomainWhitelistValue(item) === value);
+
+                if (alreadyExists) {
                     alert('此項目已經在白名單中了');
                     return;
                 }
@@ -641,7 +655,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Remove Local
         chrome.storage.local.get(storageKey, (res) => {
             let list = res[storageKey] || [];
-            list = list.filter(e => e !== item);
+            list = currentType === 'email'
+                ? list.filter(e => e !== item)
+                : list.filter(e => normalizeDomainWhitelistValue(e) !== normalizeDomainWhitelistValue(item));
             chrome.storage.local.set({ [storageKey]: list }, () => {
                 renderWhitelist();
             });
@@ -651,8 +667,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             chrome.storage.sync.get(storageKey, (sRes) => {
                 let sList = sRes[storageKey] || [];
-                if (sList.includes(item)) {
-                    sList = sList.filter(e => e !== item);
+                const exists = currentType === 'email'
+                    ? sList.includes(item)
+                    : sList.some(e => normalizeDomainWhitelistValue(e) === normalizeDomainWhitelistValue(item));
+                if (exists) {
+                    sList = currentType === 'email'
+                        ? sList.filter(e => e !== item)
+                        : sList.filter(e => normalizeDomainWhitelistValue(e) !== normalizeDomainWhitelistValue(item));
                     chrome.storage.sync.set({ [storageKey]: sList });
                 }
             });

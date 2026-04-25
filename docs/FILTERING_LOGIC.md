@@ -49,6 +49,9 @@
 1.  完整網域 (e.g., `sub.example.com`)
 2.  去除/加上 `www.` 的網域
 3.  父網域 (e.g., `example.com`)
+4.  針對較具體的子網域樣式 wildcard (e.g., `*.example.kr`, `*.com.tw`)
+
+**注意**：系統不會自動產生 `*.kr`、`*.tw`、`*.com` 這種涵蓋整個頂級網域的 wildcard，以避免把整個國碼或通用網域一律視為詐騙。
 
 ## 3. 安全防護機制 (Safe Root Domains)
 

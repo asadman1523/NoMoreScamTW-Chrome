@@ -12,7 +12,7 @@ global.chrome = {
         local: {
             get: async (keys) => {
                 if (keys === 'userDomainWhitelist') {
-                    return { userDomainWhitelist: ['goodguy.com', 'safe.kr'] };
+                    return { userDomainWhitelist: ['goodguy.com', 'safe.example.kr'] };
                 }
                 return {};
             },
@@ -37,7 +37,9 @@ global.chrome = {
 const bgContext = bgCode + `
     cachedDatabase = {
         "badsite.com": { name: "Bad Site" },
-        "*.kr": { name: "Korean Domains Blocked" }
+        "*.kr": { name: "Legacy Korean TLD Rule" },
+        "*.example.kr": { name: "Targeted Korean Domain Rule" },
+        "data.go.kr": { name: "Legacy GoKR Block" }
     };
     cachedRemoteWhitelist = [];
 `;
@@ -69,19 +71,33 @@ async function runTests() {
     res = await checkUrl("badsite.com");
     assert(res && res.name === "Bad Site", "Should detect normal domain blacklist even without http:// prefix");
 
-    // Test 2: Wildcard Match (Not in Whitelist)
+    // Test 2: Whole-TLD Wildcards Should Not Match
     res = await checkUrl("https://scam.kr/login");
-    assert(res && res.name === "Korean Domains Blocked", "Should block .kr domains using wildcard *.kr");
+    assert(res === null, "Should NOT block scam.kr via legacy *.kr whole-TLD wildcard");
 
     res = await checkUrl("http://sub.deep.scam.kr");
-    assert(res && res.name === "Korean Domains Blocked", "Should block deep subdomains using wildcard *.kr");
+    assert(res === null, "Should NOT block deep .kr subdomains via legacy *.kr whole-TLD wildcard");
 
-    // Test 3: Whitelist Override (User Whitelist > Blacklist)
-    res = await checkUrl("https://safe.kr/path");
-    assert(res === null, "Should NOT block safe.kr because it is in userDomainWhitelist (Whitelist Priority)");
+    // Test 3: Targeted Wildcard Match Still Works
+    res = await checkUrl("https://login.example.kr/path");
+    assert(res && res.name === "Targeted Korean Domain Rule", "Should still block targeted wildcard domains like *.example.kr");
+
+    // Test 4: Whitelist Override (User Whitelist > Blacklist)
+    res = await checkUrl("https://safe.example.kr/path");
+    assert(res === null, "Should NOT block safe.example.kr because it is in userDomainWhitelist (Whitelist Priority)");
 
     res = await checkUrl("https://www.goodguy.com");
     assert(res === null, "Should NOT block goodguy.com because it is in userDomainWhitelist");
+
+    global.chrome.storage.local.get = async (keys) => {
+        if (keys === 'userDomainWhitelist') {
+            return { userDomainWhitelist: ['www.data.go.kr'] };
+        }
+        return {};
+    };
+
+    res = await checkUrl("https://data.go.kr");
+    assert(res === null, "Should treat www.data.go.kr whitelist entry as matching data.go.kr");
 
     console.log(`\nTests Completed: ${passed} Passed, ${failed} Failed`);
     process.exit(failed > 0 ? 1 : 0);

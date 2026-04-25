@@ -4,6 +4,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+function normalizeDomainForMatch(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .split('/')[0]
+    .replace(/^www\./, '');
+}
+
+function matchesDomainEntry(hostname, allowed) {
+  const normalizedHostname = normalizeDomainForMatch(hostname);
+  const normalizedAllowed = normalizeDomainForMatch(allowed);
+
+  if (!normalizedHostname || !normalizedAllowed) return false;
+
+  return normalizedHostname === normalizedAllowed || normalizedHostname.endsWith('.' + normalizedAllowed);
+}
+
+function hideWarning() {
+  const overlay = document.getElementById('fraud-guard-overlay');
+  if (!overlay) return;
+
+  if (window.fraudGuardTimerId) {
+    clearInterval(window.fraudGuardTimerId);
+    window.fraudGuardTimerId = null;
+  }
+
+  document.body.removeChild(overlay);
+  document.body.style.overflow = '';
+}
+
+function reevaluateCurrentDomainWhitelist() {
+  const hostname = window.location.hostname;
+  if (!hostname) return;
+
+  chrome.storage.local.get(['remoteWhitelist', 'userDomainWhitelist'], (result) => {
+    if (chrome.runtime.lastError) return;
+
+    const isUserWhitelisted = Array.isArray(result.userDomainWhitelist) &&
+      result.userDomainWhitelist.some(allowed => matchesDomainEntry(hostname, allowed));
+
+    const isRemoteWhitelisted = Array.isArray(result.remoteWhitelist) &&
+      result.remoteWhitelist.some(allowed => matchesDomainEntry(hostname, allowed));
+
+    if (isUserWhitelisted || isRemoteWhitelisted) {
+      hideWarning();
+    }
+  });
+}
+
 function showWarning(fraudInfo) {
   // Check if already shown
   let overlay = document.getElementById('fraud-guard-overlay');
@@ -67,11 +117,7 @@ function showWarning(fraudInfo) {
 
     document.getElementById('fraud-guard-ignore').addEventListener('click', () => {
       clearInterval(timerId);
-      const currentOverlay = document.getElementById('fraud-guard-overlay');
-      if (currentOverlay) {
-        document.body.removeChild(currentOverlay);
-        document.body.style.overflow = '';
-      }
+      hideWarning();
     });
 
     document.getElementById('fraud-guard-report').addEventListener('click', () => {
@@ -94,11 +140,7 @@ function showWarning(fraudInfo) {
           // Auto close after 2 seconds
           setTimeout(() => {
             clearInterval(timerId);
-            const currentOverlay = document.getElementById('fraud-guard-overlay');
-            if (currentOverlay) {
-              document.body.removeChild(currentOverlay);
-              document.body.style.overflow = '';
-            }
+            hideWarning();
           }, 2000);
         } else {
           btn.textContent = '❌ 回報失敗';
@@ -167,9 +209,7 @@ function proceedWithGovCheck(title, hostname) {
 
       // 1. Check User Domain Whitelist
       if (result.userDomainWhitelist && Array.isArray(result.userDomainWhitelist)) {
-        const isUserWhitelisted = result.userDomainWhitelist.some(allowed =>
-          hostname === allowed || hostname.endsWith('.' + allowed)
-        );
+        const isUserWhitelisted = result.userDomainWhitelist.some(allowed => matchesDomainEntry(hostname, allowed));
         if (isUserWhitelisted) return;
       }
 
@@ -181,9 +221,7 @@ function proceedWithGovCheck(title, hostname) {
       }
 
       // Check Exact or Subdomain
-      const isAllowed = allowedExact.some(allowed =>
-        hostname === allowed || hostname.endsWith('.' + allowed)
-      );
+      const isAllowed = allowedExact.some(allowed => matchesDomainEntry(hostname, allowed));
 
       if (hostname.endsWith('google.com') || hostname.endsWith('google.com.tw') || hostname === 'mail.google.com' || isAllowed) return;
 
@@ -266,3 +304,10 @@ setTimeout(checkGovImpersonation, 1500);
 new MutationObserver(() => {
   checkGovImpersonation();
 }).observe(document.querySelector('title'), { subtree: true, characterData: true, childList: true });
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  if (changes.userDomainWhitelist || changes.remoteWhitelist) {
+    reevaluateCurrentDomainWhitelist();
+  }
+});

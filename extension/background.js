@@ -19,6 +19,26 @@ let cachedRemoteWhitelist = [];
 
 const SAFE_ROOT_DOMAINS = ['bitbucket.org', 'github.com', 'facebook.com', 'instagram.com', 'twitter.com', 'google.com', 'youtube.com', 'line.me'];
 
+function normalizeDomainForMatch(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .split('/')[0]
+        .replace(/^www\./, '');
+}
+
+function matchesDomainEntry(hostname, allowed) {
+    const normalizedHostname = normalizeDomainForMatch(hostname);
+    const normalizedAllowed = normalizeDomainForMatch(allowed);
+
+    if (!normalizedHostname || !normalizedAllowed) {
+        return false;
+    }
+
+    return normalizedHostname === normalizedAllowed || normalizedHostname.endsWith('.' + normalizedAllowed);
+}
+
 // ... (Existing Firebase Helper) ...
 
 // Initialize License Manager on Startup
@@ -484,8 +504,7 @@ async function checkUrl(url) {
         const { userDomainWhitelist } = await chrome.storage.local.get('userDomainWhitelist');
         if (userDomainWhitelist && Array.isArray(userDomainWhitelist)) {
             const isUserWhitelisted = userDomainWhitelist.some(allowed =>
-                hostname === allowed || hostname.endsWith('.' + allowed) ||
-                hostnameNoWww === allowed || hostnameNoWww.endsWith('.' + allowed)
+                matchesDomainEntry(hostname, allowed) || matchesDomainEntry(hostnameNoWww, allowed)
             );
             if (isUserWhitelisted) {
                 console.log(`[NoMoreScam] Whitelisted by User: ${url}`);
@@ -496,8 +515,7 @@ async function checkUrl(url) {
         // 2. Check Remote Whitelist
         if (typeof cachedRemoteWhitelist !== 'undefined' && Array.isArray(cachedRemoteWhitelist)) {
             const isRemoteWhitelisted = cachedRemoteWhitelist.some(allowed =>
-                hostname === allowed || hostname.endsWith('.' + allowed) ||
-                hostnameNoWww === allowed || hostnameNoWww.endsWith('.' + allowed)
+                matchesDomainEntry(hostname, allowed) || matchesDomainEntry(hostnameNoWww, allowed)
             );
             if (isRemoteWhitelisted) {
                 console.log(`[NoMoreScam] Whitelisted by Remote: ${url}`);
@@ -549,9 +567,9 @@ async function checkUrl(url) {
             }
         }
 
-        // 3. Generate Wildcard Candidates (e.g. *.kr, *.com.tw)
+        // 3. Generate subdomain wildcard candidates, but never a whole TLD rule (e.g. allow *.example.kr, skip *.kr)
         const noWwwParts = hostnameNoWww.split('.');
-        for (let i = 0; i < noWwwParts.length - 1; i++) {
+        for (let i = 0; i < noWwwParts.length - 2; i++) {
             const wildcard = '*.' + noWwwParts.slice(i + 1).join('.');
             candidates.add(wildcard);
         }
@@ -594,10 +612,14 @@ async function checkDomainAge(url) {
         // Check Remote Whitelist (Gist) AND User Domain Whitelist
         const { userDomainWhitelist } = await chrome.storage.local.get('userDomainWhitelist');
         const isUserWhitelisted = userDomainWhitelist && Array.isArray(userDomainWhitelist) && userDomainWhitelist.some(allowed =>
-            hostname === allowed || hostname.endsWith('.' + allowed)
+            matchesDomainEntry(hostname, allowed)
         );
 
-        if (isUserWhitelisted || cachedRemoteWhitelist.includes(hostname) || cachedRemoteWhitelist.includes('www.' + hostname)) {
+        const isRemoteWhitelisted = cachedRemoteWhitelist && Array.isArray(cachedRemoteWhitelist) && cachedRemoteWhitelist.some(allowed =>
+            matchesDomainEntry(hostname, allowed)
+        );
+
+        if (isUserWhitelisted || isRemoteWhitelisted) {
             return null;
         }
 
@@ -805,14 +827,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             // Check User Whitelist First
             if (userDomainWhitelist && Array.isArray(userDomainWhitelist)) {
                 const isUserWhitelisted = userDomainWhitelist.some(allowed =>
-                    urlObj.hostname === allowed || urlObj.hostname.endsWith('.' + allowed)
+                    matchesDomainEntry(urlObj.hostname, allowed)
                 );
                 if (isUserWhitelisted) return;
             }
 
             if (cachedRemoteWhitelist && Array.isArray(cachedRemoteWhitelist)) {
                 const isRemoteWhitelisted = cachedRemoteWhitelist.some(allowed =>
-                    urlObj.hostname === allowed || urlObj.hostname.endsWith('.' + allowed)
+                    matchesDomainEntry(urlObj.hostname, allowed)
                 );
                 if (isRemoteWhitelisted) return;
             }
