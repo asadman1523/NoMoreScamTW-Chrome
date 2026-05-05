@@ -4,6 +4,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const reportStatus = document.getElementById('reportStatus');
     // const updateBtn = document.getElementById('updateBtn');
 
+    function requestCurrentGmailReportData(tabId) {
+        return new Promise((resolve) => {
+            chrome.tabs.sendMessage(tabId, { action: 'getCurrentGmailReportData' }, (response) => {
+                if (chrome.runtime.lastError) {
+                    resolve(null);
+                    return;
+                }
+                resolve(response || null);
+            });
+        });
+    }
+
     // Load initial status
     updateStatus();
     updateLicenseStatus(); // New: Check License
@@ -26,18 +38,42 @@ document.addEventListener('DOMContentLoaded', async () => {
             reportScamBtn.textContent = '🚨 回報此網站詐騙';
         }
 
-        reportScamBtn.addEventListener('click', () => {
+        reportScamBtn.addEventListener(async () => {
             reportScamBtn.disabled = true;
-            reportStatus.textContent = '✅ 已送出至雲端自動進行安全分析！';
             reportStatus.style.display = 'block';
-            reportStatus.style.color = '#2e7d32';
+            reportStatus.textContent = '送出中...';
+            reportStatus.style.color = '#666';
+
+            let reportTarget = currentUrl;
+            let gmailReportData = null;
+
+            if (isGmail) {
+                gmailReportData = await requestCurrentGmailReportData(tabs[0].id);
+                const senderEmail = gmailReportData && gmailReportData.email
+                    ? String(gmailReportData.email).trim().toLowerCase()
+                    : '';
+
+                if (!senderEmail) {
+                    reportStatus.textContent = '❌ 請先打開一封郵件，再回報寄件者詐騙。';
+                    reportStatus.style.color = '#d32f2f';
+                    reportScamBtn.disabled = false;
+                    return;
+                }
+                reportTarget = senderEmail;
+            }
 
             chrome.runtime.sendMessage({
                 action: 'reportToAI',
-                url: currentUrl,
-                isGmail: isGmail
-            }, (response) => {
-                // 不需特別處理，因為我們不再等待 AI 判斷回合
+                url: reportTarget,
+                isGmail: isGmail,
+                emailSubject: gmailReportData ? gmailReportData.subject : '',
+                emailBody: gmailReportData ? gmailReportData.body : '',
+                senderName: gmailReportData ? gmailReportData.senderName : ''
+            }, () => {
+                reportStatus.textContent = isGmail
+                    ? `✅ 已送出寄件者 ${reportTarget} 至雲端自動分析！`
+                    : '✅ 已送出至雲端自動進行安全分析！';
+                reportStatus.style.color = '#2e7d32';
             });
         });
     });

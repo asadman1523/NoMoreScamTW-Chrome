@@ -915,7 +915,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         fetch(functionUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: request.url, isGmail: request.isGmail })
+            body: JSON.stringify({
+                url: request.url,
+                isGmail: request.isGmail,
+                emailSubject: request.emailSubject || '',
+                emailBody: request.emailBody || '',
+                senderName: request.senderName || ''
+            })
         }).catch(err => console.error('reportToAI fetch error:', err));
         
         sendResponse({ success: true, message: '已送出回報' });

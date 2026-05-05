@@ -38,6 +38,32 @@ chrome.storage.local.get('brandRules', (res) => {
 // This implies NO exclusion. If body has '165', and sender is NOT gov.tw -> WARN.
 // So I will empty the exclusion list based on strict interpretation.
 const EXCLUDED_BODY_KEYWORDS = [];
+const MAX_REPORT_BODY_LENGTH = 4000;
+
+function getCurrentOpenedEmailReportData() {
+    const openedSender = document.querySelector('span.gD[email]');
+    const subjectElem = document.querySelector('h2.hP');
+    const bodyElem = document.querySelector('.a3s.aiL') || document.querySelector('.a3s');
+
+    const email = openedSender ? openedSender.getAttribute('email') : '';
+    const senderName = openedSender ? (openedSender.name || openedSender.innerText || openedSender.textContent || '') : '';
+    const subject = subjectElem ? (subjectElem.innerText || subjectElem.textContent || '') : '';
+    const body = bodyElem ? (bodyElem.innerText || bodyElem.textContent || '') : '';
+
+    return {
+        email: email ? email.trim().toLowerCase() : '',
+        senderName: senderName.trim(),
+        subject: subject.trim(),
+        body: body.trim().slice(0, MAX_REPORT_BODY_LENGTH)
+    };
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'getCurrentGmailReportData') {
+        sendResponse(getCurrentOpenedEmailReportData());
+        return false;
+    }
+});
 
 // Split scanning to prevent context pollution
 function scanSender() {
