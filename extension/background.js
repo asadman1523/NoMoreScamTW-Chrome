@@ -910,8 +910,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'reportToAI') {
         const FIREBASE_PROJECT_ID = 'nomorescamtw'; // Known project ID
         const functionUrl = `https://us-central1-${FIREBASE_PROJECT_ID}.cloudfunctions.net/analyzeReport`;
-        
-        // Notify Firebase Function without awaiting response
+
         fetch(functionUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -922,9 +921,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 emailBody: request.emailBody || '',
                 senderName: request.senderName || ''
             })
-        }).catch(err => console.error('reportToAI fetch error:', err));
-        
-        sendResponse({ success: true, message: '已送出回報' });
+        })
+            .then(async (response) => {
+                const responseText = await response.text();
+                if (!response.ok) {
+                    throw new Error(responseText || `Firebase Function failed with ${response.status}`);
+                }
+
+                let data = {};
+                try {
+                    data = responseText ? JSON.parse(responseText) : {};
+                } catch (error) {
+                    data = { message: responseText };
+                }
+
+                sendResponse({ success: true, message: '已送出回報', data });
+            })
+            .catch((err) => {
+                console.error('reportToAI fetch error:', err);
+                sendResponse({ success: false, error: err.message || 'Firebase 回報失敗' });
+            });
+
         return true;
     }
     // 1. Update Database

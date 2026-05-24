@@ -4,16 +4,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     const reportStatus = document.getElementById('reportStatus');
     // const updateBtn = document.getElementById('updateBtn');
 
+    function setReportStatus(message, color) {
+        reportStatus.style.display = 'block';
+        reportStatus.textContent = message;
+        reportStatus.style.color = color;
+    }
+
+    function setReportButtonState(isDisabled) {
+        reportScamBtn.disabled = isDisabled;
+    }
+
     function requestCurrentGmailReportData(tabId) {
-        return new Promise((resolve) => {
-            chrome.tabs.sendMessage(tabId, { action: 'getCurrentGmailReportData' }, (response) => {
-                if (chrome.runtime.lastError) {
-                    resolve(null);
-                    return;
-                }
-                resolve(response || null);
-            });
-        });
+        return chrome.tabs.sendMessage(tabId, { action: 'getCurrentGmailReportData' })
+            .then((response) => response || null)
+            .catch(() => null);
     }
 
     // Load initial status
@@ -38,43 +42,57 @@ document.addEventListener('DOMContentLoaded', async () => {
             reportScamBtn.textContent = '🚨 回報此網站詐騙';
         }
 
-        reportScamBtn.addEventListener(async () => {
-            reportScamBtn.disabled = true;
-            reportStatus.style.display = 'block';
-            reportStatus.textContent = '送出中...';
-            reportStatus.style.color = '#666';
+        reportScamBtn.addEventListener('click', async () => {
+            try {
+                setReportButtonState(true);
+                setReportStatus('送出中...', '#666');
 
-            let reportTarget = currentUrl;
-            let gmailReportData = null;
+                let reportTarget = currentUrl;
+                let gmailReportData = null;
 
-            if (isGmail) {
-                gmailReportData = await requestCurrentGmailReportData(tabs[0].id);
-                const senderEmail = gmailReportData && gmailReportData.email
-                    ? String(gmailReportData.email).trim().toLowerCase()
-                    : '';
+                if (isGmail) {
+                    gmailReportData = await requestCurrentGmailReportData(tabs[0].id);
+                    const senderEmail = gmailReportData && gmailReportData.email
+                        ? String(gmailReportData.email).trim().toLowerCase()
+                        : '';
 
-                if (!senderEmail) {
-                    reportStatus.textContent = '❌ 請先打開一封郵件，再回報寄件者詐騙。';
-                    reportStatus.style.color = '#d32f2f';
-                    reportScamBtn.disabled = false;
+                    if (!senderEmail) {
+                        setReportStatus('❌ 請先打開一封郵件；若已打開仍失敗，請重新整理 Gmail 後再試一次。', '#d32f2f');
+                        setReportButtonState(false);
+                        return;
+                    }
+                    reportTarget = senderEmail;
+                }
+
+                const response = await chrome.runtime.sendMessage({
+                    action: 'reportToAI',
+                    url: reportTarget,
+                    isGmail: isGmail,
+                    emailSubject: gmailReportData ? gmailReportData.subject : '',
+                    emailBody: gmailReportData ? gmailReportData.body : '',
+                    senderName: gmailReportData ? gmailReportData.senderName : ''
+                });
+
+                if (!response || response.success !== true) {
+                    const errorMessage = response && response.error
+                        ? response.error
+                        : '送出失敗，請稍後再試。';
+                    setReportStatus(`❌ ${errorMessage}`, '#d32f2f');
+                    setReportButtonState(false);
                     return;
                 }
-                reportTarget = senderEmail;
-            }
 
-            chrome.runtime.sendMessage({
-                action: 'reportToAI',
-                url: reportTarget,
-                isGmail: isGmail,
-                emailSubject: gmailReportData ? gmailReportData.subject : '',
-                emailBody: gmailReportData ? gmailReportData.body : '',
-                senderName: gmailReportData ? gmailReportData.senderName : ''
-            }, () => {
-                reportStatus.textContent = isGmail
-                    ? `✅ 已送出寄件者 ${reportTarget} 至雲端自動分析！`
-                    : '✅ 已送出至雲端自動進行安全分析！';
-                reportStatus.style.color = '#2e7d32';
-            });
+                setReportStatus(
+                    isGmail
+                        ? `✅ 已送出寄件者 ${reportTarget} 至雲端自動分析！`
+                        : '✅ 已送出至雲端自動進行安全分析！',
+                    '#2e7d32'
+                );
+                setReportButtonState(false);
+            } catch (error) {
+                setReportStatus(`❌ ${error && error.message ? error.message : '送出失敗，請稍後再試。'}`, '#d32f2f');
+                setReportButtonState(false);
+            }
         });
     });
 
