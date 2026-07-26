@@ -18,6 +18,197 @@ let cachedDatabase = {};
 let cachedRemoteWhitelist = [];
 
 const SAFE_ROOT_DOMAINS = ['bitbucket.org', 'github.com', 'facebook.com', 'instagram.com', 'twitter.com', 'google.com', 'youtube.com', 'line.me'];
+const DAILY_RISK_DISMISSALS_KEY = 'dailyRiskDismissals';
+const FREE_WHITELIST_LIMIT = 20;
+const UPGRADE_URL = 'https://nomorescamtw.web.app/';
+const UPGRADE_PRICE_LABEL = '年費 NT$499';
+
+let whitelistMutationQueue = Promise.resolve();
+let dailyRiskMutationQueue = Promise.resolve();
+
+function getLocalDateKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function normalizeEmail(email) {
+    return typeof email === 'string' ? email.trim().toLowerCase() : '';
+}
+
+function normalizeDomain(domain) {
+    if (typeof domain !== 'string') return '';
+    return domain.trim().toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .split('/')[0]
+        .replace(/^\*\@/, '')
+        .replace(/^@/, '')
+        .replace(/\.$/, '');
+}
+
+function normalizeWhitelistEntry(type, value) {
+    if (type === 'email') {
+        const email = normalizeEmail(value);
+        return email.includes('@') && !email.startsWith('*@') ? email : '';
+    }
+    if (type === 'email_domain') {
+        const domain = normalizeDomain(value);
+        return domain.includes('.') ? `*@${domain}` : '';
+    }
+    if (type === 'domain') {
+        const domain = normalizeDomain(value);
+        return domain.includes('.') ? domain : '';
+    }
+    return '';
+}
+
+function normalizeStoredWhitelistEntry(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed.startsWith('*@')) {
+        const domain = normalizeDomain(trimmed);
+        return domain ? `*@${domain}` : '';
+    }
+    return trimmed;
+}
+
+function uniqueWhitelistCount(emailList, domainList) {
+    const uniqueEntries = new Set();
+    (Array.isArray(emailList) ? emailList : []).forEach(value => {
+        const normalized = normalizeStoredWhitelistEntry(value);
+        if (normalized) uniqueEntries.add(`email:${normalized}`);
+    });
+    (Array.isArray(domainList) ? domainList : []).forEach(value => {
+        const normalized = normalizeDomain(value);
+        if (normalized) uniqueEntries.add(`domain:${normalized}`);
+    });
+    return uniqueEntries.size;
+}
+
+function getEmptyDailyRiskDismissals() {
+    return { webHosts: {}, gmailEmails: {}, gmailDomains: {} };
+}
+
+function pruneDailyRiskDismissals(stored, today = getLocalDateKey()) {
+    const source = stored && typeof stored === 'object' ? stored : {};
+    const result = getEmptyDailyRiskDismissals();
+
+    Object.keys(result).forEach(section => {
+        const entries = source[section];
+        if (!entries || typeof entries !== 'object') return;
+        Object.entries(entries).forEach(([key, date]) => {
+            if (date === today) result[section][key.toLowerCase()] = date;
+        });
+    });
+
+    return result;
+}
+
+function getDailyDismissalTarget(scope, value) {
+    if (scope === 'web') {
+        return { section: 'webHosts', key: normalizeDomain(value) };
+    }
+    if (scope === 'gmail_email') {
+        return { section: 'gmailEmails', key: normalizeEmail(value) };
+    }
+    if (scope === 'gmail_domain') {
+        return { section: 'gmailDomains', key: normalizeDomain(value) };
+    }
+    return { section: '', key: '' };
+}
+
+async function dismissRiskToday(scope, value) {
+    const target = getDailyDismissalTarget(scope, value);
+    if (!target.section || !target.key) {
+        return { success: false, error: 'invalid_target' };
+    }
+
+    const today = getLocalDateKey();
+    const stored = await chrome.storage.local.get(DAILY_RISK_DISMISSALS_KEY);
+    const dismissals = pruneDailyRiskDismissals(stored[DAILY_RISK_DISMISSALS_KEY], today);
+    dismissals[target.section][target.key] = today;
+    await chrome.storage.local.set({ [DAILY_RISK_DISMISSALS_KEY]: dismissals });
+    return { success: true, date: today };
+}
+
+async function isWebRiskDismissedToday(hostname) {
+    const normalizedHostname = normalizeDomain(hostname);
+    if (!normalizedHostname) return false;
+    const stored = await chrome.storage.local.get(DAILY_RISK_DISMISSALS_KEY);
+    const dismissals = pruneDailyRiskDismissals(stored[DAILY_RISK_DISMISSALS_KEY]);
+    return dismissals.webHosts[normalizedHostname] === getLocalDateKey();
+}
+
+async function getWhitelistQuota() {
+    const stored = await chrome.storage.local.get(['userWhitelist', 'userDomainWhitelist']);
+    const emailList = Array.isArray(stored.userWhitelist) ? stored.userWhitelist : [];
+    const domainList = Array.isArray(stored.userDomainWhitelist) ? stored.userDomainWhitelist : [];
+    const stats = typeof LicenseManager !== 'undefined'
+        ? await LicenseManager.getStats()
+        : { isPremium: false };
+
+    return {
+        success: true,
+        isPremium: Boolean(stats && stats.isPremium),
+        emailCount: new Set(emailList.map(normalizeStoredWhitelistEntry).filter(Boolean)).size,
+        domainCount: new Set(domainList.map(normalizeDomain).filter(Boolean)).size,
+        total: uniqueWhitelistCount(emailList, domainList),
+        limit: FREE_WHITELIST_LIMIT,
+        upgradeUrl: UPGRADE_URL,
+        upgradePriceLabel: UPGRADE_PRICE_LABEL
+    };
+}
+
+async function addUserWhitelistEntry(type, rawValue) {
+    const value = normalizeWhitelistEntry(type, rawValue);
+    if (!value) {
+        return { success: false, status: 'invalid', error: 'invalid_entry' };
+    }
+
+    const storageKey = type === 'domain' ? 'userDomainWhitelist' : 'userWhitelist';
+    const stored = await chrome.storage.local.get(['userWhitelist', 'userDomainWhitelist']);
+    const emailList = Array.isArray(stored.userWhitelist) ? [...stored.userWhitelist] : [];
+    const domainList = Array.isArray(stored.userDomainWhitelist) ? [...stored.userDomainWhitelist] : [];
+    const targetList = storageKey === 'userWhitelist' ? emailList : domainList;
+    const normalizer = storageKey === 'userWhitelist'
+        ? normalizeStoredWhitelistEntry
+        : normalizeDomain;
+    const alreadyExists = targetList.some(item => normalizer(item) === value);
+    const quota = await getWhitelistQuota();
+
+    if (alreadyExists) {
+        return { ...quota, success: true, status: 'exists', value, storageKey };
+    }
+
+    if (!quota.isPremium && quota.total >= FREE_WHITELIST_LIMIT) {
+        return {
+            ...quota,
+            success: false,
+            status: 'limit_reached',
+            message: `免費版白名單共用額度已滿（${quota.total}/${FREE_WHITELIST_LIMIT}）。升級${UPGRADE_PRICE_LABEL}，享無上限白名單。`
+        };
+    }
+
+    targetList.push(value);
+    await chrome.storage.local.set({ [storageKey]: targetList });
+
+    if (quota.isPremium) {
+        try {
+            const syncStored = await chrome.storage.sync.get(storageKey);
+            const syncList = Array.isArray(syncStored[storageKey]) ? [...syncStored[storageKey]] : [];
+            if (!syncList.some(item => normalizer(item) === value)) {
+                syncList.push(value);
+                await chrome.storage.sync.set({ [storageKey]: syncList });
+            }
+        } catch (error) {
+            console.warn('[NoMoreScam] Whitelist sync failed:', error);
+        }
+    }
+
+    const updatedQuota = await getWhitelistQuota();
+    return { ...updatedQuota, success: true, status: 'added', value, storageKey };
+}
 
 function normalizeDomainForMatch(value) {
     return String(value || '')
@@ -402,11 +593,21 @@ async function updateDatabase(force = false) {
             fetchDataset176455(config)
         ]);
 
-        const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Update timed out (30s)')), 30000)
-        );
+        let updateTimeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+            updateTimeoutId = setTimeout(
+                () => reject(new Error('Update timed out (30s)')),
+                30000
+            );
+        });
 
-        const [result2, result3] = await Promise.race([updatePromise, timeoutPromise]);
+        let updateResults;
+        try {
+            updateResults = await Promise.race([updatePromise, timeoutPromise]);
+        } finally {
+            clearTimeout(updateTimeoutId);
+        }
+        const [result2, result3] = updateResults;
 
         const data2 = result2.data;
         const data3 = result3.data;
@@ -849,6 +1050,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             currentHostname = new URL(tab.url).hostname;
         } catch (e) { return; }
 
+        // A user-dismissed hostname should not consume quota or increment warning stats today.
+        if (await isWebRiskDismissedToday(currentHostname)) {
+            return;
+        }
+
         // Skip quota check if this domain was already scanned today and was safe
         const domainAlreadyScanned = LicenseManager.isDomainScannedToday(currentHostname);
 
@@ -1048,6 +1254,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .then(result => sendResponse(result))
             .catch(err => sendResponse({ success: false, error: err.message }));
         return true; // Async
+    }
+
+    // Shared whitelist quota and mutation API for popup/content/Gmail.
+    if (request.action === 'getWhitelistQuota') {
+        getWhitelistQuota()
+            .then(result => sendResponse(result))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
+    }
+
+    if (request.action === 'addUserWhitelistEntry') {
+        whitelistMutationQueue = whitelistMutationQueue
+            .catch(() => undefined)
+            .then(() => addUserWhitelistEntry(request.entryType, request.value));
+        whitelistMutationQueue
+            .then(result => sendResponse(result))
+            .catch(error => sendResponse({ success: false, status: 'error', error: error.message }));
+        return true;
+    }
+
+    if (request.action === 'dismissRiskToday') {
+        dailyRiskMutationQueue = dailyRiskMutationQueue
+            .catch(() => undefined)
+            .then(() => dismissRiskToday(request.scope, request.value));
+        dailyRiskMutationQueue
+            .then(result => sendResponse(result))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
     }
 
     // 6. Report False Positive

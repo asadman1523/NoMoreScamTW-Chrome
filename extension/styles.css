@@ -76,3 +76,28 @@
   background: none;
   border: none;
 }
+
+#fraud-guard-whitelist,
+#fraud-guard-action-status button,
+#fraud-guard-notice button {
+  background-color: #1a73e8;
+  color: white;
+  border: none;
+  padding: 9px 16px;
+  font-size: 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#fraud-guard-whitelist:hover,
+#fraud-guard-action-status button:hover,
+#fraud-guard-notice button:hover {
+  background-color: #1557b0;
+}
+
+#fraud-guard-ignore:disabled,
+#fraud-guard-whitelist:disabled,
+#fraud-guard-report:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}

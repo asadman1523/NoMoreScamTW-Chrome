@@ -33,6 +33,9 @@ global.chrome = {
     }
 };
 
+global.importScripts = () => {};
+global.FIREBASE_CONFIG = {};
+
 // 模擬 fetch
 global.fetch = async (url) => {
     console.log('正在擷取 URL:', url);
@@ -45,7 +48,46 @@ TestFraud,test-fraud.example,5,2023/01/01,2023/01/02
 "QuoteName, Inc",quote.example,1,2023/01/01,2023/01/02
 WithWWW,www.bad-site.com,1,2023/01/01,2023/01/02`;
 
+    if (url.includes('gist.githubusercontent.com')) {
+        return {
+            ok: true,
+            json: async () => ({})
+        };
+    }
+    if (url.includes('/dataset/165027')) {
+        return {
+            ok: true,
+            json: async () => ({
+                result: {
+                    distribution: [{
+                        resourceFormat: 'JSON',
+                        resourceDownloadUrl: 'mock://165027'
+                    }]
+                }
+            })
+        };
+    }
+    if (url === 'mock://165027') {
+        return {
+            ok: true,
+            json: async () => []
+        };
+    }
+    if (url.includes('/dataset/176455')) {
+        return {
+            ok: true,
+            json: async () => ({
+                result: {
+                    distribution: [{
+                        resourceDownloadUrl: 'mock://176455'
+                    }]
+                }
+            })
+        };
+    }
+
     return {
+        ok: true,
         text: async () => sampleCsv
     };
 };
@@ -57,6 +99,9 @@ const backgroundCode = fs.readFileSync(path.join(__dirname, '..', 'extension', '
 
 // 執行 background 程式碼
 eval(backgroundCode);
+
+// IndexedDB persistence is covered separately; keep this integration test in memory.
+saveToIndexedDB = async () => {};
 
 async function runTest() {
     console.log('--- 開始測試 ---');
@@ -106,11 +151,11 @@ async function runTest() {
     if (global.startupCallback) await global.startupCallback();
 
     if (global.mockAlarm && global.mockAlarm.name === 'dailyUpdate') {
-        // 驗證大約是從現在開始的 24 小時後
+        // 驗證大約是從現在開始的 7 天後
         const nextRun = new Date(global.mockAlarm.when);
         const now = Date.now();
         const diff = nextRun.getTime() - now;
-        const expectedDiff = 24 * 60 * 60 * 1000;
+        const expectedDiff = 7 * 24 * 60 * 60 * 1000;
 
         if (Math.abs(diff - expectedDiff) < 5000) {
             console.log('✅ 鬧鐘時間正確。');

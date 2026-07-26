@@ -1,4 +1,8 @@
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+const DAILY_RISK_DISMISSALS_KEY = 'dailyRiskDismissals';
+const WEB_UPGRADE_URL = 'https://nomorescamtw.web.app/';
+let fraudGuardTimerId = null;
+
+chrome.runtime.onMessage.addListener((request) => {
   if (request.action === 'showWarning') {
     showWarning(request.fraudInfo);
   }
@@ -23,16 +27,7 @@ function matchesDomainEntry(hostname, allowed) {
 }
 
 function hideWarning() {
-  const overlay = document.getElementById('fraud-guard-overlay');
-  if (!overlay) return;
-
-  if (window.fraudGuardTimerId) {
-    clearInterval(window.fraudGuardTimerId);
-    window.fraudGuardTimerId = null;
-  }
-
-  document.body.removeChild(overlay);
-  document.body.style.overflow = '';
+  closeWarningOverlay();
 }
 
 function reevaluateCurrentDomainWhitelist() {
@@ -54,77 +49,241 @@ function reevaluateCurrentDomainWhitelist() {
   });
 }
 
+function getLocalDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeHostname(hostname) {
+  return typeof hostname === 'string' ? hostname.trim().toLowerCase() : '';
+}
+
+function isWebRiskDismissedInState(dismissals, hostname) {
+  const entries = dismissals && dismissals.webHosts;
+  const normalizedHostname = normalizeHostname(hostname);
+  return Boolean(entries && normalizedHostname &&
+    entries[normalizedHostname] === getLocalDateKey());
+}
+
+function isCurrentWebRiskDismissed(callback) {
+  chrome.storage.local.get(DAILY_RISK_DISMISSALS_KEY, (result) => {
+    if (chrome.runtime.lastError) {
+      callback(false);
+      return;
+    }
+    callback(isWebRiskDismissedInState(
+      result[DAILY_RISK_DISMISSALS_KEY],
+      window.location.hostname
+    ));
+  });
+}
+
+function closeWarningOverlay() {
+  if (fraudGuardTimerId) {
+    clearInterval(fraudGuardTimerId);
+    fraudGuardTimerId = null;
+  }
+  const overlay = document.getElementById('fraud-guard-overlay');
+  if (overlay) overlay.remove();
+  document.body.style.overflow = '';
+}
+
+function showPageNotice(message, includeWhitelistAction = false) {
+  const existing = document.getElementById('fraud-guard-notice');
+  if (existing) existing.remove();
+
+  const notice = document.createElement('div');
+  notice.id = 'fraud-guard-notice';
+  notice.style.position = 'fixed';
+  notice.style.right = '20px';
+  notice.style.bottom = '20px';
+  notice.style.zIndex = '2147483647';
+  notice.style.maxWidth = '420px';
+  notice.style.padding = '14px';
+  notice.style.borderRadius = '8px';
+  notice.style.background = '#fff';
+  notice.style.color = '#333';
+  notice.style.boxShadow = '0 4px 18px rgba(0,0,0,.28)';
+  notice.style.border = '1px solid #dadce0';
+
+  const text = document.createElement('div');
+  text.textContent = message;
+  notice.appendChild(text);
+
+  if (includeWhitelistAction) {
+    const button = document.createElement('button');
+    button.textContent = '永久加入白名單';
+    button.style.marginTop = '10px';
+    button.addEventListener('click', () => addCurrentWebsiteToWhitelist(button));
+    notice.appendChild(button);
+  }
+
+  document.body.appendChild(notice);
+  setTimeout(() => {
+    if (notice.isConnected) notice.remove();
+  }, 8000);
+  return notice;
+}
+
+function showPageUpgradeNotice(message, upgradeUrl = WEB_UPGRADE_URL) {
+  const notice = showPageNotice(message);
+  const button = document.createElement('button');
+  button.textContent = '升級年費 NT$499';
+  button.style.display = 'block';
+  button.style.marginTop = '10px';
+  button.addEventListener('click', () => {
+    window.open(upgradeUrl, '_blank', 'noopener');
+  });
+  notice.appendChild(button);
+}
+
+function setWarningStatus(message, isError = false, showUpgrade = false) {
+  const status = document.getElementById('fraud-guard-action-status');
+  if (!status) return;
+  status.textContent = message;
+  status.style.display = 'block';
+  status.style.color = isError ? '#b3261e' : '#137333';
+
+  if (showUpgrade) {
+    const upgradeButton = document.createElement('button');
+    upgradeButton.textContent = '升級年費 NT$499';
+    upgradeButton.style.display = 'block';
+    upgradeButton.style.margin = '10px auto 0';
+    upgradeButton.addEventListener('click', () => {
+      window.open(WEB_UPGRADE_URL, '_blank', 'noopener');
+    });
+    status.appendChild(upgradeButton);
+  }
+}
+
+function dismissCurrentWebsiteForToday(callback) {
+  chrome.runtime.sendMessage({
+    action: 'dismissRiskToday',
+    scope: 'web',
+    value: window.location.hostname
+  }, (response) => {
+    callback(Boolean(response && response.success));
+  });
+}
+
+function addCurrentWebsiteToWhitelist(button) {
+  if (button) {
+    button.disabled = true;
+    button.textContent = '加入中...';
+  }
+
+  chrome.runtime.sendMessage({
+    action: 'addUserWhitelistEntry',
+    entryType: 'domain',
+    value: window.location.hostname
+  }, (response) => {
+    if (response && response.success) {
+      closeWarningOverlay();
+      const message = response.status === 'exists'
+        ? '此網站已在永久白名單中。'
+        : '已永久加入白名單，之後不再提示此網站。';
+      showPageNotice(message);
+      return;
+    }
+
+    if (response && response.status === 'limit_reached') {
+      if (document.getElementById('fraud-guard-overlay')) {
+        setWarningStatus(response.message, true, true);
+      } else {
+        showPageUpgradeNotice(response.message, response.upgradeUrl);
+      }
+    } else {
+      if (document.getElementById('fraud-guard-overlay')) {
+        setWarningStatus('白名單儲存失敗，請稍後重試。', true);
+      } else {
+        showPageNotice('白名單儲存失敗，請稍後重試。');
+      }
+    }
+    if (button) {
+      button.disabled = false;
+      button.textContent = '永久加入白名單';
+    }
+  });
+}
+
 function showWarning(fraudInfo) {
-  // Check if already shown
+  isCurrentWebRiskDismissed((dismissed) => {
+    if (!dismissed) renderWarning(fraudInfo);
+  });
+}
+
+function renderWarning(fraudInfo) {
   let overlay = document.getElementById('fraud-guard-overlay');
 
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.id = 'fraud-guard-overlay';
-
-    // Use innerHTML for static structure ONLY. Dynamic content is added via textContent later.
     overlay.innerHTML = `
-        <div id="fraud-guard-modal">
-          <div id="fraud-guard-icon">⚠️ <span style="font-size: 0.4em; color: #333; font-weight: normal; vertical-align: middle;">麥騙 - 偵測到潛在危險</span></div>
-          <div id="fraud-guard-title">警告：疑似詐騙/高風險網站</div>
-          
-          <div id="fraud-guard-url-container" style="text-align: center; margin: 10px 0; padding: 8px; background: #f9f9f9; border-radius: 5px; border: 1px solid #eee;">
-             <span id="fg-url" style="font-weight: bold; font-size: 1.1em; color: #333;"></span>
-          </div>
-
-          <div id="fraud-guard-message-container" style="text-align: left; margin: 10px 0;">
-             <ul id="fraud-guard-reasons-list" style="padding-left: 20px; color: #d93025; font-weight: bold; margin: 5px 0;">
-             </ul>
-          </div>
-
-          <div id="fraud-guard-timer" style="margin-bottom: 10px; color: #d93025; font-weight: bold;">
-            將於 <span id="fg-countdown">60</span> 秒後自動導向安全頁面...
-          </div>
-          <button id="fraud-guard-button">立即離開 (回到 Google)</button>
-          <button id="fraud-guard-ignore">我了解風險，繼續瀏覽</button>
-          <div style="margin-top: 15px;">
-            <button id="fraud-guard-report" style="background: transparent; border: 1px solid #999; color: #555; font-size: 0.8em; padding: 5px 10px;">回報非詐騙 (誤判)</button>
-          </div>
+      <div id="fraud-guard-modal">
+        <div id="fraud-guard-icon">⚠️ <span style="font-size: 0.4em; color: #333; font-weight: normal; vertical-align: middle;">麥騙 - 偵測到潛在危險</span></div>
+        <div id="fraud-guard-title">警告：疑似詐騙/高風險網站</div>
+        <div id="fraud-guard-url-container" style="text-align: center; margin: 10px 0; padding: 8px; background: #f9f9f9; border-radius: 5px; border: 1px solid #eee;">
+          <span id="fg-url" style="font-weight: bold; font-size: 1.1em; color: #333;"></span>
         </div>
-      `;
+        <div id="fraud-guard-message-container" style="text-align: left; margin: 10px 0;">
+          <ul id="fraud-guard-reasons-list" style="padding-left: 20px; color: #d93025; font-weight: bold; margin: 5px 0;"></ul>
+        </div>
+        <div id="fraud-guard-timer" style="margin-bottom: 10px; color: #d93025; font-weight: bold;">
+          將於 <span id="fg-countdown">60</span> 秒後自動導向安全頁面...
+        </div>
+        <button id="fraud-guard-button">立即離開 (回到 Google)</button>
+        <button id="fraud-guard-ignore">略過（今日不再提示）</button>
+        <button id="fraud-guard-whitelist" style="margin-top: 10px;">永久加入白名單</button>
+        <div style="margin-top: 15px;">
+          <button id="fraud-guard-report" style="background: transparent; border: 1px solid #999; color: #555; font-size: 0.8em; padding: 5px 10px;">回報非詐騙 (誤判)</button>
+        </div>
+        <div id="fraud-guard-action-status" style="display:none; margin-top:12px; font-size:13px;"></div>
+      </div>
+    `;
     document.body.appendChild(overlay);
-
-    // --- Singleton Initialization Logic (Runs only once) ---
-
-    // Prevent scrolling
     document.body.style.overflow = 'hidden';
 
-    // Redirect logic
-    const safeUrl = 'https://www.google.com';
     let timeLeft = 60;
     const countdownEl = document.getElementById('fg-countdown');
-
-    // Timer interval
-    const timerId = setInterval(() => {
+    fraudGuardTimerId = setInterval(() => {
       timeLeft--;
       if (countdownEl) countdownEl.textContent = timeLeft;
       if (timeLeft <= 0) {
-        clearInterval(timerId);
-        window.location.href = safeUrl;
+        clearInterval(fraudGuardTimerId);
+        window.location.href = 'https://www.google.com';
       }
     }, 1000);
 
-    // Event Listeners
     document.getElementById('fraud-guard-button').addEventListener('click', () => {
-      clearInterval(timerId);
-      window.location.href = safeUrl;
+      closeWarningOverlay();
+      window.location.href = 'https://www.google.com';
     });
 
-    document.getElementById('fraud-guard-ignore').addEventListener('click', () => {
-      clearInterval(timerId);
-      hideWarning();
+    document.getElementById('fraud-guard-ignore').addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = '儲存中...';
+      dismissCurrentWebsiteForToday((saved) => {
+        closeWarningOverlay();
+        showPageNotice(
+          saved
+            ? '今日不再提示此網站風險；若要永久避免，請加入白名單。'
+            : '僅略過本次；略過設定未能保存，重新整理後可能再次提示。',
+          saved
+        );
+      });
     });
 
-    document.getElementById('fraud-guard-report').addEventListener('click', () => {
-      const btn = document.getElementById('fraud-guard-report');
-      btn.disabled = true;
-      btn.textContent = '回報中...';
+    document.getElementById('fraud-guard-whitelist').addEventListener('click', (event) => {
+      addCurrentWebsiteToWhitelist(event.currentTarget);
+    });
 
+    document.getElementById('fraud-guard-report').addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = '回報中...';
       chrome.runtime.sendMessage({
         action: 'reportFalsePositive',
         source: 'web',
@@ -133,29 +292,27 @@ function showWarning(fraudInfo) {
           title: document.title
         }
       }, (response) => {
-        if (response && response.success) {
-          btn.textContent = '✅ 已收到您的回報，我們會儘快審查。';
-          btn.style.color = 'green';
-          btn.style.borderColor = 'green';
-          // Auto close after 2 seconds
-          setTimeout(() => {
-            clearInterval(timerId);
-            hideWarning();
-          }, 2000);
-        } else {
-          btn.textContent = '❌ 回報失敗';
-          btn.disabled = false;
+        if (!response || !response.success) {
+          button.textContent = '❌ 回報失敗，請重試';
+          button.disabled = false;
+          return;
         }
+
+        dismissCurrentWebsiteForToday((saved) => {
+          closeWarningOverlay();
+          showPageNotice(
+            saved
+              ? '已收到回報。今日不再提示此網站風險；若要永久避免，請加入白名單。'
+              : '已收到回報，但今日略過設定未能保存。',
+            saved
+          );
+        });
       });
     });
   }
 
-  // --- Dynamic Content Update (Runs every time showWarning is called) ---
-
-  // Helper to add reason
   const reasonsList = document.getElementById('fraud-guard-reasons-list');
   const addReason = (text) => {
-    // Deduplicate
     const existing = Array.from(reasonsList.children).map(li => li.textContent);
     if (!existing.includes(text)) {
       const li = document.createElement('li');
@@ -164,26 +321,21 @@ function showWarning(fraudInfo) {
     }
   };
 
-  if (fraudInfo) {
-    // Update URL
-    document.getElementById('fg-url').textContent = fraudInfo.url || window.location.hostname || '未知';
+  if (!fraudInfo) return;
+  document.getElementById('fg-url').textContent =
+    fraudInfo.url || window.location.hostname || '未知';
 
-    // Update Reasons
-    let reasonText = '';
-    if (fraudInfo.customMessages && Array.isArray(fraudInfo.customMessages)) {
-      fraudInfo.customMessages.forEach(msg => addReason(msg));
-      return; // Added multiple reasons, done.
-    } else if (fraudInfo.customMessage) {
-      reasonText = fraudInfo.customMessage;
-    } else if (fraudInfo.type === 'newly_registered') {
-      const dateStr = fraudInfo.startDate ? ` (註冊日期：${fraudInfo.startDate})` : '';
-      reasonText = `此網站註冊未滿 30 天，極有可能為免洗詐騙網站${dateStr}`;
-    } else if (fraudInfo.isImpersonationCheck) {
-      reasonText = `標題包含政府關鍵字，但非 gov.tw 網域`;
-    } else {
-      reasonText = `已被政府列為詐騙網站 (回報數：${fraudInfo.count || 1})`;
-    }
-    addReason(reasonText);
+  if (Array.isArray(fraudInfo.customMessages)) {
+    fraudInfo.customMessages.forEach(message => addReason(message));
+  } else if (fraudInfo.customMessage) {
+    addReason(fraudInfo.customMessage);
+  } else if (fraudInfo.type === 'newly_registered') {
+    const dateText = fraudInfo.startDate ? `（註冊日期：${fraudInfo.startDate}）` : '';
+    addReason(`此網站註冊未滿 30 天，極有可能為免洗詐騙網站${dateText}`);
+  } else if (fraudInfo.isImpersonationCheck) {
+    addReason('標題包含政府關鍵字，但非 gov.tw 網域');
+  } else {
+    addReason(`已被政府列為詐騙網站（回報數：${fraudInfo.count || 1}）`);
   }
 }
 
@@ -203,9 +355,18 @@ function checkGovImpersonation() {
 function proceedWithGovCheck(title, hostname) {
   // Fetch remote whitelist and user domain whitelist from storage
   try {
-    chrome.storage.local.get(['remoteWhitelist', 'userDomainWhitelist'], (result) => {
+    chrome.storage.local.get(
+      ['remoteWhitelist', 'userDomainWhitelist', DAILY_RISK_DISMISSALS_KEY],
+      (result) => {
       // Check for runtime error
       if (chrome.runtime.lastError) return;
+
+      if (isWebRiskDismissedInState(
+        result[DAILY_RISK_DISMISSALS_KEY],
+        hostname
+      )) {
+        return;
+      }
 
       // 1. Check User Domain Whitelist
       if (result.userDomainWhitelist && Array.isArray(result.userDomainWhitelist)) {
@@ -290,7 +451,8 @@ function proceedWithGovCheck(title, hostname) {
           }
         });
       });
-    });
+      }
+    );
   } catch (e) {
     // console.log('Extension context invalidated, please refresh the page.');
   }

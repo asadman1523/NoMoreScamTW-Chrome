@@ -512,7 +512,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentType = e.target.value;
             whitelistInput.value = '';
             whitelistInput.placeholder = (currentType === 'email')
-                ? "輸入 Email (例如: user@example.com)"
+                ? "輸入 Email 或 *@寄件網域"
                 : "輸入網域 (例如: example.com)";
             renderWhitelist();
         });
@@ -573,50 +573,37 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        const storageKey = (currentType === 'email') ? 'userWhitelist' : 'userDomainWhitelist';
+        const entryType = currentType === 'domain'
+            ? 'domain'
+            : (value.trim().startsWith('*@') ? 'email_domain' : 'email');
 
-        chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {
-            const isPro = stats && stats.isPremium;
+        addBtn.disabled = true;
+        chrome.runtime.sendMessage({
+            action: 'addUserWhitelistEntry',
+            entryType,
+            value
+        }, (response) => {
+            addBtn.disabled = false;
 
-            chrome.storage.local.get(storageKey, (res) => {
-                let list = res[storageKey] || [];
-
-                // Limit Check
-                if (!isPro && list.length >= 5) {
-                    alert('免費版只能設定 5 組白名單，請升級以解鎖無限制數量！');
-                    return;
-                }
-
-                const alreadyExists = currentType === 'email'
-                    ? list.includes(value)
-                    : list.some(item => normalizeDomainWhitelistValue(item) === value);
-
-                if (alreadyExists) {
+            if (response && response.success) {
+                if (response.status === 'exists') {
                     alert('此項目已經在白名單中了');
-                    return;
-                }
-
-                list.push(value);
-
-                // Save Local
-                chrome.storage.local.set({ [storageKey]: list }, () => {
+                } else {
                     whitelistInput.value = '';
-                    renderWhitelist();
-                });
-
-                // Sync if Pro
-                if (isPro) {
-                    try {
-                        chrome.storage.sync.get(storageKey, (sRes) => {
-                            let sList = sRes[storageKey] || [];
-                            if (!sList.includes(value)) {
-                                sList.push(value);
-                                chrome.storage.sync.set({ [storageKey]: sList });
-                            }
-                        });
-                    } catch (e) { }
                 }
-            });
+                renderWhitelist();
+                return;
+            }
+
+            if (response && response.status === 'limit_reached') {
+                if (confirm(`${response.message}\n\n是否前往購買？`)) {
+                    chrome.tabs.create({ url: response.upgradeUrl || 'https://nomorescamtw.web.app/' });
+                }
+                renderWhitelist();
+                return;
+            }
+
+            alert('白名單新增失敗，請確認格式後重試。');
         });
     });
 
@@ -638,22 +625,22 @@ document.addEventListener('DOMContentLoaded', async () => {
             const list = res[storageKey] || [];
             whitelistContainer.innerHTML = '';
 
-            // Update Limit Msg
-            chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {
-                const isPro = stats && stats.isPremium;
-                if (!isPro) {
-                    limitMsg.textContent = `目前 ${currentType === 'email' ? 'Email' : '網域'} 已用: ${list.length} / 5 (升級進階版享無限量)`;
-                    limitMsg.style.color = (list.length >= 5) ? '#d32f2f' : '#fb8c00'; // Make it orange for promotion
+            // Update the shared Email + website-domain quota.
+            chrome.runtime.sendMessage({ action: 'getWhitelistQuota' }, (quota) => {
+                if (!quota || !quota.success) return;
+                const summary = `Email ${quota.emailCount}＋網站網域 ${quota.domainCount}＝${quota.total}`;
+                if (!quota.isPremium) {
+                    const isFull = quota.total >= quota.limit;
+                    limitMsg.textContent = isFull
+                        ? `${summary}/${quota.limit}（已滿；升級年費 NT$499 享無上限）`
+                        : `${summary}/${quota.limit}（免費版共用額度）`;
+                    limitMsg.style.color = isFull ? '#d32f2f' : '#fb8c00';
                     limitMsg.style.cursor = 'pointer';
                     limitMsg.style.textDecoration = 'underline';
                     limitMsg.setAttribute('data-is-link', 'true');
-                    limitMsg.title = '點擊前往升級頁面';
-
-                    if (list.length >= 5) {
-                        limitMsg.textContent = `目前 ${currentType === 'email' ? 'Email' : '網域'} 已用: ${list.length} / 5 (已滿，升級享無限量)`;
-                    }
+                    limitMsg.title = '點擊前往年費 NT$499 升級頁面';
                 } else {
-                    limitMsg.textContent = `目前數量: ${list.length} (進階版無限制)`;
+                    limitMsg.textContent = `${summary}（付費版無上限）`;
                     limitMsg.style.color = '#2e7d32';
                     limitMsg.style.cursor = 'default';
                     limitMsg.style.textDecoration = 'none';
@@ -676,7 +663,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 li.style.alignItems = 'center';
 
                 const span = document.createElement('span');
-                span.textContent = item;
+                span.textContent = currentType === 'email' && item.startsWith('*@')
+                    ? `整個寄件網域：${item.substring(1)}`
+                    : item;
                 span.style.fontSize = '14px';
 
                 const delBtn = document.createElement('button');
