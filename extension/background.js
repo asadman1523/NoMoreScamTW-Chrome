@@ -348,6 +348,8 @@ async function getFromIndexedDB(url) {
 }
 
 const CONFIG_URL = 'https://gist.githubusercontent.com/asadman1523/bec9509e0032170e0d0786a4a4fe3952/raw/gistfile1.txt';
+const DATABASE_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DATABASE_UPDATE_INTERVAL_MINUTES = 24 * 60;
 
 
 
@@ -941,11 +943,11 @@ async function checkDomainAge(url) {
 // 根據上次更新時間排程每日更新
 async function scheduleDailyUpdate(lastUpdatedTime) {
     const baseTime = lastUpdatedTime || Date.now();
-    const nextRun = baseTime + 7 * 24 * 60 * 60 * 1000;
+    const nextRun = baseTime + DATABASE_UPDATE_INTERVAL_MS;
 
     chrome.alarms.create('dailyUpdate', {
         when: nextRun,
-        periodInMinutes: 10080 // 7 天
+        periodInMinutes: DATABASE_UPDATE_INTERVAL_MINUTES // 24 小時
     });
     await chrome.storage.local.set({ nextUpdateTime: nextRun });
 }
@@ -986,7 +988,7 @@ chrome.runtime.onStartup.addListener(async () => {
 
     const now = Date.now();
     // 如果從未更新或距離上次更新超過 24 小時
-    if (!lastUpdated || (now - lastUpdated) >= 7 * 24 * 60 * 60 * 1000) {
+    if (!lastUpdated || (now - lastUpdated) >= DATABASE_UPDATE_INTERVAL_MS) {
         console.log('Startup: Database outdated, updating...');
         await updateDatabase();
     } else {
