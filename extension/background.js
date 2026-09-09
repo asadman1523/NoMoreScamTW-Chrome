@@ -350,6 +350,59 @@ async function getFromIndexedDB(url) {
 const CONFIG_URL = 'https://gist.githubusercontent.com/asadman1523/bec9509e0032170e0d0786a4a4fe3952/raw/gistfile1.txt';
 const DATABASE_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DATABASE_UPDATE_INTERVAL_MINUTES = 24 * 60;
+const REMOTE_WHITELIST_REFRESH_MS = 15 * 60 * 1000;
+let remoteWhitelistRefreshPromise = null;
+
+async function ensureRemoteWhitelistFresh(force = false) {
+    if (remoteWhitelistRefreshPromise) return remoteWhitelistRefreshPromise;
+
+    remoteWhitelistRefreshPromise = (async () => {
+        const stored = await chrome.storage.local.get([
+            'remoteWhitelist',
+            'remoteWhitelistUpdatedAt'
+        ]);
+
+        if (Array.isArray(stored.remoteWhitelist)) {
+            cachedRemoteWhitelist = stored.remoteWhitelist;
+        }
+
+        const lastUpdated = Number(stored.remoteWhitelistUpdatedAt) || 0;
+        if (!force && lastUpdated > 0 && Date.now() - lastUpdated < REMOTE_WHITELIST_REFRESH_MS) {
+            return cachedRemoteWhitelist;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        try {
+            const response = await fetch(`${CONFIG_URL}?t=${Date.now()}`, {
+                cache: 'no-store',
+                signal: controller.signal
+            });
+            if (!response.ok) throw new Error(`Remote whitelist fetch failed: ${response.status}`);
+
+            const config = await response.json();
+            if (!config || !Array.isArray(config.whitelist)) {
+                throw new Error('Remote whitelist response is invalid');
+            }
+
+            cachedRemoteWhitelist = config.whitelist;
+            await chrome.storage.local.set({
+                remoteWhitelist: config.whitelist,
+                remoteWhitelistUpdatedAt: Date.now()
+            });
+            return cachedRemoteWhitelist;
+        } catch (error) {
+            console.warn('Failed to refresh remote whitelist; using stored copy', error);
+            return cachedRemoteWhitelist;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    })().finally(() => {
+        remoteWhitelistRefreshPromise = null;
+    });
+
+    return remoteWhitelistRefreshPromise;
+}
 
 
 
@@ -552,6 +605,7 @@ async function updateDatabase(force = false) {
                 if (config && config.whitelist && Array.isArray(config.whitelist)) {
                     console.log('Updating Whitelist from Remote:', config.whitelist);
                     updates.remoteWhitelist = config.whitelist;
+                    updates.remoteWhitelistUpdatedAt = Date.now();
                     cachedRemoteWhitelist = config.whitelist; // Update memory cache
                 }
                 if (config && config.brand_rules && Array.isArray(config.brand_rules)) {
@@ -685,6 +739,8 @@ async function updateDatabase(force = false) {
 // 檢查 URL 是否在資料庫中
 async function checkUrl(url) {
     try {
+        await ensureRemoteWhitelistFresh();
+
         let hostname = '';
         let cleanUrl = url.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
 
@@ -797,6 +853,8 @@ const rdapCache = {};
 // 檢查網域註冊時間 (RDAP)
 async function checkDomainAge(url) {
     try {
+        await ensureRemoteWhitelistFresh();
+
         let hostname = '';
         try {
             const urlObj = new URL(url);
@@ -975,6 +1033,8 @@ chrome.runtime.onStartup.addListener(async () => {
         cachedRemoteWhitelist = remoteWhitelist;
     }
 
+    await ensureRemoteWhitelistFresh();
+
     if (!termsAccepted) {
         // Optional: Open welcome page every startup if not accepted?
         // Let's just rely on onInstalled or user clicking extension icon.
@@ -1006,6 +1066,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab.url) {
+        await ensureRemoteWhitelistFresh();
+
         // Enforce Terms: Check if user agreed
         // Since this hotpath runs often, we should cache termsAccepted too, but storage.get is fast enough for now locally.
         const { termsAccepted } = await chrome.storage.local.get('termsAccepted');
