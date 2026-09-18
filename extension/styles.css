@@ -1,0 +1,103 @@
+#fraud-guard-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 0, 0, 0.9);
+  z-index: 2147483647; /* Max z-index */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#fraud-guard-modal {
+  background-color: white;
+  padding: 30px 20px;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  max-width: 500px;
+  width: 90%;
+  box-sizing: border-box;
+}
+
+#fraud-guard-icon {
+  font-size: 64px;
+  margin-bottom: 20px;
+}
+
+#fraud-guard-title {
+  color: #d32f2f;
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 16px;
+}
+
+#fraud-guard-message {
+  color: #333;
+  font-size: 16px;
+  margin-bottom: 30px;
+  line-height: 1.5;
+}
+
+#fraud-guard-details {
+  background-color: #f5f5f5;
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 30px;
+  font-weight: bold;
+  color: #555;
+}
+
+#fraud-guard-button {
+  background-color: #d32f2f;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  font-size: 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+#fraud-guard-button:hover {
+  background-color: #b71c1c;
+}
+
+#fraud-guard-ignore {
+  display: block;
+  margin-top: 15px;
+  color: #777;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 14px;
+  background: none;
+  border: none;
+}
+
+#fraud-guard-whitelist,
+#fraud-guard-action-status button,
+#fraud-guard-notice button {
+  background-color: #1a73e8;
+  color: white;
+  border: none;
+  padding: 9px 16px;
+  font-size: 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#fraud-guard-whitelist:hover,
+#fraud-guard-action-status button:hover,
+#fraud-guard-notice button:hover {
+  background-color: #1557b0;
+}
+
+#fraud-guard-ignore:disabled,
+#fraud-guard-whitelist:disabled,
+#fraud-guard-report:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}

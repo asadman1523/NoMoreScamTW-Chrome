@@ -1,0 +1,12 @@
+{
+  "name": "nomorescamtw-chrome",
+  "version": "2.8.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node tools/test.cjs"
+  }
+}

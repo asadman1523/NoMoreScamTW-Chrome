@@ -1,0 +1,592 @@
+document.addEventListener('DOMContentLoaded', async () => {
+    const statusDiv = document.getElementById('status');
+    const reportScamBtn = document.getElementById('reportScamBtn');
+    const reportStatus = document.getElementById('reportStatus');
+    // const updateBtn = document.getElementById('updateBtn');
+
+    function setReportStatus(message, color) {
+        reportStatus.style.display = 'block';
+        reportStatus.textContent = message;
+        reportStatus.style.color = color;
+    }
+
+    function setReportButtonState(isDisabled) {
+        reportScamBtn.disabled = isDisabled;
+    }
+
+    function requestCurrentGmailReportData(tabId) {
+        return chrome.tabs.sendMessage(tabId, { action: 'getCurrentGmailReportData' })
+            .then((response) => response || null)
+            .catch(() => null);
+    }
+
+    // Load initial status
+    updateStatus();
+
+    // Detect if we are on Gmail
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs.length === 0) return;
+        const currentUrl = tabs[0].url;
+        let isGmail = false;
+        try {
+            const urlObj = new URL(currentUrl);
+            if (urlObj.hostname === 'mail.google.com') {
+                isGmail = true;
+            }
+        } catch(e) {}
+
+        if (isGmail) {
+            reportScamBtn.textContent = '🚨 回報為詐騙郵件';
+        } else {
+            reportScamBtn.textContent = '🚨 回報此網站詐騙';
+        }
+
+        reportScamBtn.addEventListener('click', async () => {
+            try {
+                setReportButtonState(true);
+                setReportStatus('送出中...', '#666');
+
+                let reportTarget = currentUrl;
+                let gmailReportData = null;
+
+                if (isGmail) {
+                    gmailReportData = await requestCurrentGmailReportData(tabs[0].id);
+                    const senderEmail = gmailReportData && gmailReportData.email
+                        ? String(gmailReportData.email).trim().toLowerCase()
+                        : '';
+
+                    if (!senderEmail) {
+                        setReportStatus('❌ 請先打開一封郵件；若已打開仍失敗，請重新整理 Gmail 後再試一次。', '#d32f2f');
+                        setReportButtonState(false);
+                        return;
+                    }
+                    if (!gmailReportData.subject || !gmailReportData.body) {
+                        setReportStatus('❌ 無法讀取郵件標題或內文，請打開郵件並等待內容載入後重試。', '#d32f2f');
+                        setReportButtonState(false);
+                        return;
+                    }
+                    reportTarget = senderEmail;
+                }
+
+                const response = await chrome.runtime.sendMessage({
+                    action: 'reportToAI',
+                    url: reportTarget,
+                    isGmail: isGmail,
+                    emailSubject: gmailReportData ? gmailReportData.subject : '',
+                    emailBody: gmailReportData ? gmailReportData.body : '',
+                    senderName: gmailReportData ? gmailReportData.senderName : ''
+                });
+
+                if (!response || response.success !== true) {
+                    const errorMessage = response && response.error
+                        ? response.error
+                        : '送出失敗，請稍後再試。';
+                    setReportStatus(`❌ ${errorMessage}`, '#d32f2f');
+                    setReportButtonState(false);
+                    return;
+                }
+
+                setReportStatus(
+                    isGmail
+                        ? `✅ 已送出寄件者 ${reportTarget} 至雲端自動分析！`
+                        : '✅ 已送出至雲端自動進行安全分析！',
+                    '#2e7d32'
+                );
+                setReportButtonState(false);
+            } catch (error) {
+                setReportStatus(`❌ ${error && error.message ? error.message : '送出失敗，請稍後再試。'}`, '#d32f2f');
+                setReportButtonState(false);
+            }
+        });
+    });
+
+    /*
+    document.getElementById('updateBtn').addEventListener('click', () => {
+        // ... (Removed) ...
+    });
+    */
+
+    /*
+    // Manual Query Handler (Removed)
+    document.getElementById('manualQueryBtn').addEventListener('click', () => {
+        const input = document.getElementById('manualQueryInput');
+        const resultDiv = document.getElementById('manualQueryResult');
+        const url = input.value.trim();
+
+        if (!url) {
+            resultDiv.innerHTML = '<span style="color: #d32f2f;">請輸入網址</span>';
+            return;
+        }
+
+        // Firebase Logging (Manual Query)
+        if (typeof FIREBASE_CONFIG !== 'undefined') {
+            // Simple version reusing the logic if possible, or duplicate fetch here since popup.js is separate context
+            // popup.js can access background page via chrome.extension.getBackgroundPage() but it's MV3...
+            // In MV3, getBackgroundPage is not reliable for Service Workers.
+            // We should send a message to background to log it, OR just do fetch here.
+            // Fetch here is easier as we don't need to wake up SW if not needed.
+            // But we need config. Let's assume config is loaded in popup.html or we fetch it.
+            // Let's add <script src="firebase_config.js"></script> to popup.html first.
+            // For now, let's implement the fetch inline assuming config global exists.
+            if (FIREBASE_CONFIG && FIREBASE_CONFIG.databaseURL && !FIREBASE_CONFIG.databaseURL.includes('YOUR_PROJECT_ID')) {
+                const statUrl = `${FIREBASE_CONFIG.databaseURL}/stats/total_queries.json`;
+                fetch(statUrl).then(res => res.json()).then(count => {
+                    fetch(statUrl, { method: 'PUT', body: JSON.stringify((count || 0) + 1) });
+                }).catch(e => console.error('Log query failed', e));
+            }
+        }
+
+        resultDiv.innerHTML = '<span style="color: #666;">查詢中...</span>';
+
+        chrome.storage.local.get(['fraudDatabase'], (items) => {
+            const db = items.fraudDatabase || {};
+            // Basic URL cleaning to get hostname AND full path
+            const cleanFullUrl = url.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
+            let hostname = cleanFullUrl.split('/')[0].split(':')[0];
+
+            // Helper function to check variations
+            const checkDB = (key) => {
+                if (db[key]) return db[key];
+                if (key.startsWith('www.') && db[key.slice(4)]) return db[key.slice(4)];
+                if (!key.startsWith('www.') && db['www.' + key]) return db['www.' + key];
+                return null;
+            };
+
+            // 1. Direct check (Full URL)
+            let info = checkDB(cleanFullUrl);
+
+            // 2. Hostname check (if different)
+            if (!info && cleanFullUrl !== hostname) {
+                info = checkDB(hostname);
+            }
+
+            // 3. Parent domain check (if not found)
+            if (!info) {
+                const parts = hostname.split('.');
+                // ... same as before
+                if (parts.length > 2) {
+                    const parentDomain = parts.slice(1).join('.');
+                    info = checkDB(parentDomain);
+                }
+            }
+
+            // 3. Fallback Fetch 165 API (Online Check)
+            if (!info) {
+                // Fetch both 160055 and 165027
+                Promise.all([
+                    // 176455 CSV
+                    fetch('https://data.gov.tw/api/v2/rest/dataset/176455')
+                        .then(res => res.json())
+                        .then(json => fetch(json.result.distribution[0].resourceDownloadUrl))
+                        .then(res => res.text()),
+
+                    // 165027 JSON
+                    fetch('https://data.gov.tw/api/v2/rest/dataset/165027')
+                        .then(res => res.json())
+                        .then(json => {
+                            // Find JSON resource
+                            const dist = json.result.distribution.find(d => d.resourceFormat === 'JSON') || json.result.distribution[0];
+                            return fetch(dist.resourceDownloadUrl);
+                        })
+                        .then(res => res.json())
+                ])
+                    .then(([csvText, jsonList]) => {
+                        let found = false;
+                        let source = '';
+                        const lowerText = csvText.toLowerCase();
+
+                        // --- Check CSV (176455) ---
+                        // Check Full URL
+                        if (lowerText.includes(',' + cleanFullUrl) || lowerText.includes('//' + cleanFullUrl)) {
+                            found = true;
+                            source = '165反詐騙';
+                        } else {
+                            // Check Hostname if different
+                            if (!found && cleanFullUrl !== hostname) {
+                                if (lowerText.includes(',' + hostname) || lowerText.includes('//' + hostname)) {
+                                    found = true;
+                                    source = '165反詐騙';
+                                }
+                            }
+
+                            // Check Parent Domain
+                            if (!found) {
+                                const parts = hostname.split('.');
+                                if (parts.length > 2) {
+                                    const parentDomain = parts.slice(1).join('.');
+                                    if (lowerText.includes(',' + parentDomain) || lowerText.includes('//' + parentDomain)) {
+                                        found = true;
+                                        source = '165反詐騙';
+                                    }
+                                }
+                            }
+                        }
+
+                        // --- Check JSON (165027) ---
+                        if (!found) {
+                            const entry = jsonList.find(item => {
+                                const domain = (item['網域名稱'] || '').toLowerCase();
+                                const url2 = (item['偽冒網址'] || '').toLowerCase();
+
+                                // Check Full URL Match
+                                if (domain === cleanFullUrl || url2.includes(cleanFullUrl)) return true;
+
+                                // Check Hostname Match
+                                if (domain === hostname || url2.includes(hostname)) return true;
+
+                                // Check Parent Domain
+                                const parts = hostname.split('.');
+                                if (parts.length > 2) {
+                                    const parentDomain = parts.slice(1).join('.');
+                                    if (domain === parentDomain || url2.includes(parentDomain)) return true;
+                                }
+                                return false;
+                            });
+
+                            if (entry) {
+                                found = true;
+                                source = 'TWNIC';
+                            }
+                        }
+
+                        if (found) {
+                            resultDiv.innerHTML = `
+                            <div style="color: #c62828; font-weight: bold;">⚠️ 警告！疑似詐騙網站</div>
+                            <div style="font-size:11px; color:#555;">(來源: ${source})</div>
+                        `;
+                        } else {
+                            resultDiv.innerHTML = `
+                            <div style="color: #2e7d32; font-weight: bold; margin-bottom: 8px;">資料庫無紀錄</div>
+                            <button id="btnAiReport" style="background:#d93025; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">回報為詐騙 (AI 分析)</button>
+                            <div id="aiReportStatus" style="font-size:11px; color:#666; margin-top:5px;"></div>
+                        `;
+                            // Bind click event for the new button
+                            setTimeout(() => {
+                                const btn = document.getElementById('btnAiReport');
+                                if (btn) {
+                                    btn.addEventListener('click', () => {
+                                        const status = document.getElementById('aiReportStatus');
+                                        status.innerHTML = '🤖 AI 正在分析中...<br>(請稍候約 3-5 秒)';
+                                        btn.disabled = true;
+                                        btn.style.opacity = '0.7';
+
+                                        chrome.runtime.sendMessage({
+                                            action: 'analyzeAndReport',
+                                            content: cleanFullUrl
+                                        }, (response) => {
+                                            if (response && response.success) {
+                                                const result = response.result;
+                                                if (result.isScam) {
+                                                    status.innerHTML = `
+                                                    <span style="color:#d93025; font-weight:bold;">✅ 已確認為詐騙！</span><br>
+                                                    信心指數: ${result.confidence}%<br>
+                                                    類型: ${result.type}<br>
+                                                    <span style="color:#555;">已自動加入雲端資料庫。</span>
+                                                `;
+                                                } else {
+                                                    status.innerHTML = `
+                                                    <span style="color:#2e7d32; font-weight:bold;">ℹ️ AI 判定安全</span><br>
+                                                    信心指數: ${result.confidence}%<br>
+                                                    理由: ${result.reason || '未發現異常'}
+                                                `;
+                                                }
+                                            } else {
+                                                status.innerText = '❌ 分析失敗: ' + (response ? response.error : '未知錯誤');
+                                                btn.disabled = false;
+                                                btn.style.opacity = '1';
+                                            }
+                                        });
+                                    });
+                                }
+                            }, 100);
+                        }
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        resultDiv.innerHTML = '<span style="color: #d32f2f;">連線失敗</span>';
+                    });
+            } else {
+                resultDiv.innerHTML = `
+                    <div style="color: #c62828; font-weight: bold;">
+                        ⚠️ 警告！資料庫中有紀錄
+                    </div>
+                `;
+            }
+        });
+    });
+    */
+
+    // Set text dynamically to prevent flash
+    document.getElementById('appName').textContent = chrome.i18n.getMessage('appName');
+
+    // Set Version
+    const manifest = chrome.runtime.getManifest();
+    document.getElementById('version').textContent = `v${manifest.version}`;
+
+    async function updateStatus() {
+        const { lastUpdated, nextUpdateTime, termsAccepted, totalEntries } = await chrome.storage.local.get(['lastUpdated', 'nextUpdateTime', 'termsAccepted', 'totalEntries']);
+
+        // Set Default Button Text if nothing else happens
+        // updateBtn.textContent = chrome.i18n.getMessage('btnUpdate') || 'Update Database';
+
+        if (!termsAccepted) {
+            statusDiv.innerHTML = `
+                <div style="color: #d93025; margin-bottom: 10px;">${chrome.i18n.getMessage('termsNotAccepted') || '⚠️ Disclaimer not accepted'}</div>
+                <button id="openTermsBtn" style="background:#4285f4; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">${chrome.i18n.getMessage('btnOpenTerms') || 'Open Terms'}</button>
+            `;
+            document.getElementById('openTermsBtn').addEventListener('click', () => {
+                chrome.tabs.create({ url: 'welcome.html' });
+            });
+            // updateBtn.disabled = true;
+            return;
+        }
+
+        if (lastUpdated) {
+            const lastDate = new Date(lastUpdated).toLocaleString('zh-TW'); // Use locale string
+            const nextDate = nextUpdateTime ? new Date(nextUpdateTime).toLocaleString('zh-TW') : '...';
+            const count = totalEntries || 0;
+
+            /*
+            // Check cooldown (5 minutes = 300000 ms)
+            const now = Date.now();
+            const timeDiff = now - lastUpdated;
+            const cooldown = 5 * 60 * 1000;
+
+            if (timeDiff < cooldown) {
+                const remainingMinutes = Math.ceil((cooldown - timeDiff) / 60000);
+                updateBtn.disabled = true;
+                updateBtn.textContent = `${chrome.i18n.getMessage('cooldownLabel') || 'Cooldown'} (${remainingMinutes})`;
+            } else {
+                updateBtn.disabled = false;
+                updateBtn.textContent = chrome.i18n.getMessage('btnUpdate') || 'Update Database';
+            }
+            */
+
+            statusDiv.innerHTML = `
+        <strong>${chrome.i18n.getMessage('databaseStatus') || 'Status: Online'}</strong><br>
+        <span style="font-size:12px">
+        ${chrome.i18n.getMessage('lastUpdatedLabel') || 'Last Updated:'} ${lastDate}<br>
+        ${chrome.i18n.getMessage('nextUpdateLabel') || 'Next Update:'} ${nextDate}<br>
+        ${chrome.i18n.getMessage('totalRecordsLabel') || 'Total Records:'} ${count}
+        </span>
+      `;
+        } else {
+            const { lastError } = await chrome.storage.local.get('lastError');
+            if (lastError) {
+                statusDiv.innerHTML = `
+                    <div style="color: #d93025; margin-bottom: 5px;">${chrome.i18n.getMessage('dbInitializing') || 'Initialization Failed'}</div>
+                    <div style="font-size: 11px; color: #999;">Error: ${lastError}</div>
+                    <button id="retryBtn" style="margin-top:5px; padding:4px 8px; font-size:11px;">Retry</button>
+                `;
+                document.getElementById('retryBtn').addEventListener('click', () => {
+                    statusDiv.textContent = 'Retrying...';
+                    chrome.runtime.sendMessage({ action: 'forceUpdate' }, () => updateStatus());
+                });
+            } else {
+                statusDiv.innerHTML = `
+                    <div id="initMsg">${chrome.i18n.getMessage('dbInitializing') || '正在下載反詐騙資料庫...'}</div>
+                    <div style="font-size: 10px; color: #888; margin-top: 4px;">(首次下載需時約 10-20 秒，請稍候)</div>
+                `;
+
+                // Trigger update silently if needed
+                chrome.runtime.sendMessage({ action: 'forceUpdate' });
+            }
+        }
+    }
+
+    // --- Whitelist Management Logic ---
+
+    const mainView = document.getElementById('mainView');
+    const whitelistView = document.getElementById('whitelistView');
+    const manageBtn = document.getElementById('manageWhitelistBtn');
+    const backBtn = document.getElementById('backToMainBtn');
+    const addBtn = document.getElementById('addWhitelistBtn');
+    const whitelistInput = document.getElementById('whitelistInput');
+    const whitelistContainer = document.getElementById('whitelistContainer');
+    const limitMsg = document.getElementById('whitelistLimitMsg');
+    const fbGroupBtn = document.getElementById('fbGroupBtn');
+    const radioBtns = document.getElementsByName('whitelistType');
+
+    // Current Type (email or domain)
+    let currentType = 'email';
+
+    // Radio Change Handler
+    radioBtns.forEach(btn => {
+        btn.addEventListener('change', (e) => {
+            currentType = e.target.value;
+            whitelistInput.value = '';
+            whitelistInput.placeholder = (currentType === 'email')
+                ? "輸入 Email 或 *@寄件網域"
+                : "輸入網域 (例如: example.com)";
+            renderWhitelist();
+        });
+    });
+
+    // FB Group Link
+    if (fbGroupBtn) {
+        fbGroupBtn.addEventListener('click', () => {
+            chrome.tabs.create({ url: 'https://www.facebook.com/groups/1283784360250717' });
+        });
+    }
+
+    // View Switching
+    manageBtn.addEventListener('click', () => {
+        mainView.style.display = 'none';
+        whitelistView.style.display = 'block';
+        renderWhitelist();
+    });
+
+    backBtn.addEventListener('click', () => {
+        whitelistView.style.display = 'none';
+        mainView.style.display = 'block';
+    });
+
+    function normalizeDomainWhitelistValue(value) {
+        return String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/^https?:\/\//, '')
+            .split('/')[0]
+            .replace(/^www\./, '');
+    }
+
+    // Add Whitelist Entry
+    addBtn.addEventListener('click', () => {
+        const rawValue = whitelistInput.value.trim();
+        const value = currentType === 'email' ? rawValue : normalizeDomainWhitelistValue(rawValue);
+
+        if (!value) {
+            alert('請輸入內容');
+            return;
+        }
+
+        if (currentType === 'email') {
+            if (!value.includes('@')) {
+                alert('請輸入有效的 Email 地址');
+                return;
+            }
+        } else {
+            // Domain validation (simple)
+            if (rawValue.includes('http') || rawValue.includes('://')) {
+                alert('請勿包含 http:// 或 https://，僅需輸入網域 (如 example.com)');
+                return;
+            }
+            if (!value.includes('.')) {
+                alert('請輸入有效的網域');
+                return;
+            }
+        }
+
+        const entryType = currentType === 'domain'
+            ? 'domain'
+            : (value.trim().startsWith('*@') ? 'email_domain' : 'email');
+
+        addBtn.disabled = true;
+        chrome.runtime.sendMessage({
+            action: 'addUserWhitelistEntry',
+            entryType,
+            value
+        }, (response) => {
+            addBtn.disabled = false;
+
+            if (response && response.success) {
+                if (response.status === 'exists') {
+                    alert('此項目已經在白名單中了');
+                } else {
+                    whitelistInput.value = '';
+                }
+                renderWhitelist();
+                return;
+            }
+
+            alert('白名單新增失敗，請確認格式後重試。');
+        });
+    });
+
+    // Render List
+    function renderWhitelist() {
+        const storageKey = (currentType === 'email') ? 'userWhitelist' : 'userDomainWhitelist';
+
+        chrome.storage.local.get(storageKey, (res) => {
+            const list = res[storageKey] || [];
+            whitelistContainer.innerHTML = '';
+
+            chrome.runtime.sendMessage({ action: 'getWhitelistSummary' }, (summary) => {
+                if (!summary || !summary.success) return;
+                limitMsg.textContent = `Email ${summary.emailCount}＋網站網域 ${summary.domainCount}＝${summary.total}`;
+            });
+
+            if (list.length === 0) {
+                whitelistContainer.innerHTML = `<li style="padding: 10px; color: #999; text-align: center;">尚未加入任何 ${currentType === 'email' ? 'Email' : '網域'} 白名單</li>`;
+                return;
+            }
+
+            list.forEach(item => {
+                const li = document.createElement('li');
+                li.style.padding = '10px';
+                li.style.borderBottom = '1px solid #eee';
+                li.style.display = 'flex';
+                li.style.justifyContent = 'space-between';
+                li.style.alignItems = 'center';
+
+                const span = document.createElement('span');
+                span.textContent = currentType === 'email' && item.startsWith('*@')
+                    ? `整個寄件網域：${item.substring(1)}`
+                    : item;
+                span.style.fontSize = '14px';
+
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '❌'; // Or trash icon
+                delBtn.style.background = 'transparent';
+                delBtn.style.color = '#d32f2f';
+                delBtn.style.border = 'none';
+                delBtn.style.cursor = 'pointer';
+                delBtn.style.padding = '4px 8px';
+                delBtn.style.fontSize = '12px';
+                delBtn.style.width = 'auto'; // Override default width:100%
+
+                delBtn.onclick = () => {
+                    const typeLabel = (currentType === 'email') ? 'Email' : '網域';
+                    if (confirm(`確定要移除 ${typeLabel}：${item} 嗎？`)) {
+                        removeWhitelist(item);
+                    }
+                };
+
+                li.appendChild(span);
+                li.appendChild(delBtn);
+                whitelistContainer.appendChild(li);
+            });
+        });
+    }
+
+    function removeWhitelist(item) {
+        const storageKey = (currentType === 'email') ? 'userWhitelist' : 'userDomainWhitelist';
+
+        // Remove Local
+        chrome.storage.local.get(storageKey, (res) => {
+            let list = res[storageKey] || [];
+            list = currentType === 'email'
+                ? list.filter(e => e !== item)
+                : list.filter(e => normalizeDomainWhitelistValue(e) !== normalizeDomainWhitelistValue(item));
+            chrome.storage.local.set({ [storageKey]: list }, () => {
+                renderWhitelist();
+            });
+        });
+
+        // Remove Sync (Try best effort)
+        try {
+            chrome.storage.sync.get(storageKey, (sRes) => {
+                let sList = sRes[storageKey] || [];
+                const exists = currentType === 'email'
+                    ? sList.includes(item)
+                    : sList.some(e => normalizeDomainWhitelistValue(e) === normalizeDomainWhitelistValue(item));
+                if (exists) {
+                    sList = currentType === 'email'
+                        ? sList.filter(e => e !== item)
+                        : sList.filter(e => normalizeDomainWhitelistValue(e) !== normalizeDomainWhitelistValue(item));
+                    chrome.storage.sync.set({ [storageKey]: sList });
+                }
+            });
+        } catch (e) { }
+    }
+});

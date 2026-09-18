@@ -1,0 +1,11 @@
+dist/
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+*.pem
+*.key
+*serviceAccount*.json
+.DS_Store
+__pycache__/
