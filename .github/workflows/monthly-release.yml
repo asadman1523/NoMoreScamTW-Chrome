@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -45,7 +47,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if release_json=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets 2>/dev/null); then
+            printf '%s' "$release_json" | python -X utf8 -c 'import json, os, sys; r=json.load(sys.stdin); assert not r["isDraft"] and any(a["name"] == os.environ["RELEASE_ARCHIVE"] for a in r["assets"]), "Existing release has no published ZIP"'
             echo "Release $RELEASE_TAG already exists."
             exit 0
           fi
@@ -55,3 +58,20 @@ jobs:
             --title "${RELEASE_MONTH} Chrome 外掛 v${RELEASE_VERSION}" \
             --notes "每月 Chrome 外掛封存包。原始碼提交：${GITHUB_SHA}。外掛版本：${RELEASE_VERSION}。Chrome 商店上架另行處理。" \
             --latest
+      - name: Record monthly release
+        shell: bash
+        run: |
+          set -euo pipefail
+          row="| ${RELEASE_MONTH} | ${RELEASE_VERSION} | [${RELEASE_TAG}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}) |"
+          if grep -Fq "| ${RELEASE_MONTH} |" docs/RELEASES.md; then
+            grep -Fxq -- "$row" docs/RELEASES.md
+            exit 0
+          fi
+          printf '%s\n' "$row" >> docs/RELEASES.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/RELEASES.md
+          git commit -m "Record ${RELEASE_MONTH} Chrome release"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main

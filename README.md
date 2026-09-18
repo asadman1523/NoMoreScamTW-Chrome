@@ -48,6 +48,7 @@ ZIP 產物位於 `dist/`，只包含明確列出的外掛執行檔。
 - [過濾邏輯](docs/FILTERING_LOGIC.md)
 - [權限用途](docs/PERMISSIONS.md)
 - [外部服務與開發設定](docs/SERVICES.md)
+- [每月封存紀錄](docs/RELEASES.md)
 - [資料處理說明](PRIVACY.md)
 - [貢獻方式](CONTRIBUTING.md)
 - [安全問題回報](SECURITY.md)
