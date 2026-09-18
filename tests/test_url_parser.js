@@ -1,7 +1,10 @@
 const fs = require('fs');
 
 // Read background.js content
-const bgCode = fs.readFileSync('./background.js', 'utf8');
+const bgCode = fs.readFileSync(require('path').join(__dirname, '..', 'extension', 'background.js'), 'utf8');
+
+// All network responses are synthetic; tests never contact the official backend.
+global.fetch = async () => ({ ok: true, json: async () => ({ whitelist: [] }) });
 
 // Mock global functions
 global.importScripts = () => { };

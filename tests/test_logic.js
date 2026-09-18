@@ -43,15 +43,15 @@ global.fetch = async (url) => {
     // WEBSITE_NM,WEBURL,CNT,STA_SDATE,STA_EDATE
     const sampleCsv = `WEBSITE_NM,WEBURL,CNT,STA_SDATE,STA_EDATE
 網站名稱,網址,件數,統計起始日期,統計結束日期
-0857娛樂城,listed.example,1,2023/12/12,2023/12/18
+Synthetic listing,listed.example,1,2023/12/12,2023/12/18
 TestFraud,test-fraud.example,5,2023/01/01,2023/01/02
 "QuoteName, Inc",quote.example,1,2023/01/01,2023/01/02
-WithWWW,www.bad-site.com,1,2023/01/01,2023/01/02`;
+WithWWW,bad-site.example,1,2023/01/01,2023/01/02`;
 
     if (url.includes('gist.githubusercontent.com')) {
         return {
             ok: true,
-            json: async () => ({})
+            json: async () => ({ whitelist: [] })
         };
     }
     if (url.includes('/dataset/165027')) {
@@ -88,7 +88,10 @@ WithWWW,www.bad-site.com,1,2023/01/01,2023/01/02`;
 
     return {
         ok: true,
-        text: async () => sampleCsv
+        text: async () => {
+            if (url !== "mock://176455") throw new Error("Unexpected test URL");
+            return sampleCsv;
+        }
     };
 };
 
@@ -113,10 +116,11 @@ async function runTest() {
     console.log('正在檢查 listed.example...');
     let result = await checkUrl('https://listed.example/');
     console.log('結果:', JSON.stringify(result));
-    if (result && result.name === '0857娛樂城' && result.count === '1') {
+    if (result && result.name === 'Synthetic listing' && result.count === '1') {
         console.log('✅ PASS');
     } else {
         console.error('❌ FAIL');
+        process.exitCode = 1;
     }
 
     console.log('正在檢查 test-fraud.example...');
@@ -126,6 +130,7 @@ async function runTest() {
         console.log('✅ PASS');
     } else {
         console.error('❌ FAIL');
+        process.exitCode = 1;
     }
 
     console.log('正在檢查 quote.example (逗號測試)...');
@@ -135,6 +140,7 @@ async function runTest() {
         console.log('✅ PASS (CSV Quote handled)');
     } else {
         console.error('❌ FAIL (CSV Quote failed)');
+        process.exitCode = 1;
     }
 
     console.log('正在檢查 google.com (正常網站)...');
@@ -144,6 +150,7 @@ async function runTest() {
         console.log('✅ PASS');
     } else {
         console.error('❌ FAIL');
+        process.exitCode = 1;
     }
 
     // 3. 測試鬧鐘
@@ -151,20 +158,22 @@ async function runTest() {
     if (global.startupCallback) await global.startupCallback();
 
     if (global.mockAlarm && global.mockAlarm.name === 'dailyUpdate') {
-        // 驗證大約是從現在開始的 7 天後
+        // 驗證大約是從現在開始的 24 小時後
         const nextRun = new Date(global.mockAlarm.when);
         const now = Date.now();
         const diff = nextRun.getTime() - now;
-        const expectedDiff = 7 * 24 * 60 * 60 * 1000;
+        const expectedDiff = 24 * 60 * 60 * 1000;
 
         if (Math.abs(diff - expectedDiff) < 5000) {
             console.log('✅ 鬧鐘時間正確。');
         } else {
             console.error('❌ 鬧鐘時間不正確。');
+        process.exitCode = 1;
         }
     } else {
         console.error('❌ 鬧鐘未排程。');
+        process.exitCode = 1;
     }
 }
 
-runTest();
+runTest().catch(error => { console.error(error); process.exitCode = 1; });
