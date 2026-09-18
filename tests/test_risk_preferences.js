@@ -18,6 +18,10 @@ function createStorageArea(store) {
             if (callback) callback(result);
             return Promise.resolve(result);
         },
+        remove(keys) {
+            for (const key of keys) delete store[key];
+            return Promise.resolve();
+        },
         set(updates, callback) {
             Object.assign(store, updates);
             if (callback) callback();
@@ -29,7 +33,6 @@ function createStorageArea(store) {
 function loadBackgroundContext() {
     const localStore = {};
     const syncStore = {};
-    let isPremium = false;
     const noopListener = { addListener() {} };
     const context = {
         console,
@@ -40,20 +43,6 @@ function loadBackgroundContext() {
         importScripts() {},
         FIREBASE_CONFIG: {},
         indexedDB: {},
-        LicenseManager: {
-            async init() {},
-            async getStats() {
-                return { isPremium };
-            },
-            isDomainScannedToday() {
-                return false;
-            },
-            async canScan() {
-                return true;
-            },
-            async incrementUsage() {},
-            addScannedDomain() {}
-        },
         chrome: {
             runtime: {
                 onStartup: noopListener,
@@ -69,7 +58,7 @@ function loadBackgroundContext() {
                 onAlarm: noopListener
             },
             tabs: {
-                onUpdated: noopListener,
+                onUpdated: { addListener(callback) { context.handleTabUpdate = callback; } },
                 create() {},
                 sendMessage: async () => {}
             },
@@ -81,9 +70,6 @@ function loadBackgroundContext() {
                 setBadgeBackgroundColor() {}
             }
         }
-    };
-    context.setPremium = value => {
-        isPremium = value;
     };
 
     vm.createContext(context);
@@ -250,7 +236,7 @@ function testContentAndGmailCoexistence() {
     );
 }
 
-async function testSharedWhitelistQuota() {
+async function testUnlimitedWhitelist() {
     const { context, localStore, syncStore } = loadBackgroundContext();
     localStore.userWhitelist = Array.from(
         { length: 10 },
@@ -268,20 +254,74 @@ async function testSharedWhitelistQuota() {
     assert.ok(localStore.userWhitelist.includes('*@example.org'));
 
     result = await context.addUserWhitelistEntry('domain', 'full.example');
-    assert.strictEqual(result.success, false);
-    assert.strictEqual(result.status, 'limit_reached');
-    assert.strictEqual(result.limit, 20);
-    assert.strictEqual(result.upgradePriceLabel, '年費 NT$499');
-
-    result = await context.addUserWhitelistEntry('email_domain', '@EXAMPLE.ORG');
-    assert.strictEqual(result.success, true);
-    assert.strictEqual(result.status, 'exists');
-
-    context.setPremium(true);
-    result = await context.addUserWhitelistEntry('domain', 'paid.example');
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.total, 21);
-    assert.ok(syncStore.userDomainWhitelist.includes('paid.example'));
+    result = await context.addUserWhitelistEntry('email_domain', '@EXAMPLE.ORG');
+    assert.strictEqual(result.status, 'exists');
+    for (let index = 0; index < 30; index++) {
+        result = await context.addUserWhitelistEntry('domain', `more${index}.example`);
+        assert.strictEqual(result.success, true);
+    }
+    assert.strictEqual(result.total, 51);
+    assert.ok(syncStore.userDomainWhitelist.includes('full.example'));
+    context.chrome.storage.sync.set = async () => { throw new Error('Sync capacity exceeded'); };
+    result = await context.addUserWhitelistEntry('domain', 'local-only.example');
+    assert.strictEqual(result.success, true);
+    assert.ok(localStore.userDomainWhitelist.includes('local-only.example'));
+
+}
+
+async function testFreeScanningAndMigration() {
+    const { context, localStore, syncStore } = loadBackgroundContext();
+    localStore.termsAccepted = true;
+    localStore.userLicense = { isPremium: false };
+    localStore.usageStats = { webScansToday: 9999, emailScansToday: 9999 };
+    syncStore.userLicense = { isPremium: true, key: 'old-test-key' };
+    syncStore.usageStats = { webScansToday: 9999 };
+    localStore.userWhitelist = ['keep@example.org'];
+    await context.clearRetiredBillingState();
+    assert.ok(!('userLicense' in localStore));
+    assert.ok(!('usageStats' in localStore));
+    assert.ok(!('userLicense' in syncStore));
+    assert.ok(!('usageStats' in syncStore));
+    assert.deepStrictEqual(localStore.userWhitelist, ['keep@example.org']);
+    let scans = 0;
+    let warnings = 0;
+    context.ensureRemoteWhitelistFresh = async () => {};
+    context.checkUrl = async () => { scans++; return { name: 'Synthetic test site' }; };
+    context.incrementStat = async () => {};
+    context.chrome.tabs.sendMessage = async () => { warnings++; };
+    context.console = { ...console, log() {} };
+    for (let index = 0; index < 250; index++) {
+        await context.handleTabUpdate(index, { status: 'complete' }, { url: `https://scan${index}.example/` });
+    }
+    assert.strictEqual(scans, 250);
+    assert.strictEqual(warnings, 250);
+}
+
+function testUnlimitedGmailScanning() {
+    const context = loadGmailContext();
+    context.console = { ...console, log() {} };
+    let sender;
+    let warnings = 0;
+    context.document.querySelector = selector => selector === 'span.gD[email]' ? sender : null;
+    context.checkGmailRiskDismissed = (_, callback) => callback(false);
+    context.checkUserWhitelist = (_, callback) => callback(false);
+    context.checkRemoteBlacklist = (_, callback) => callback(true);
+    context.markBlacklistedSender = () => { warnings++; };
+    context.chrome.runtime.sendMessage = request => {
+        assert.ok(!['checkQuota', 'incrementQuota'].includes(request.action));
+    };
+    for (let index = 0; index < 30; index++) {
+        const attributes = { email: `sender${index}@example.org` };
+        sender = {
+            name: 'Synthetic sender',
+            getAttribute(key) { return attributes[key]; },
+            setAttribute(key, value) { attributes[key] = value; }
+        };
+        context.scanOpenedEmail();
+    }
+    assert.strictEqual(warnings, 30);
 }
 
 async function testDailyDismissals() {
@@ -380,18 +420,20 @@ function testUiWiring() {
     assert.ok(gmailSource.includes("entryType: scope === 'domain' ? 'email_domain' : 'email'"));
     assert.ok(contentSource.includes('略過（今日不再提示）'));
     assert.ok(contentSource.includes('永久加入白名單'));
-    assert.ok(popupSource.includes("action: 'getWhitelistQuota'"));
-    assert.ok(popupSource.includes('升級年費 NT$499'));
+    assert.ok(popupSource.includes("action: 'getWhitelistSummary'"));
+    assert.ok(!popupSource.includes('activateLicense'));
 }
 
 async function run() {
-    await testSharedWhitelistQuota();
+    await testUnlimitedWhitelist();
+    await testFreeScanningAndMigration();
+    testUnlimitedGmailScanning();
     await testDailyDismissals();
     testGmailMatching();
     testWebMatching();
     testContentAndGmailCoexistence();
     testUiWiring();
-    console.log('✅ 每日略過、Gmail 精確範圍與共用 20 組白名單測試通過');
+    console.log('✅ 每日略過、Gmail 精確範圍與免費無上限白名單測試通過');
 }
 
 run().catch(error => {

@@ -22,7 +22,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Load initial status
     updateStatus();
-    updateLicenseStatus(); // New: Check License
 
     // Detect if we are on Gmail
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -58,6 +57,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                     if (!senderEmail) {
                         setReportStatus('❌ 請先打開一封郵件；若已打開仍失敗，請重新整理 Gmail 後再試一次。', '#d32f2f');
+                        setReportButtonState(false);
+                        return;
+                    }
+                    if (!gmailReportData.subject || !gmailReportData.body) {
+                        setReportStatus('❌ 無法讀取郵件標題或內文，請打開郵件並等待內容載入後重試。', '#d32f2f');
                         setReportButtonState(false);
                         return;
                     }
@@ -101,106 +105,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ... (Removed) ...
     });
     */
-
-    // License Activation
-    document.getElementById('activateBtn').addEventListener('click', () => {
-        const input = document.getElementById('licenseInput');
-        const msgDiv = document.getElementById('activationMsg');
-        const key = input.value.trim();
-
-        if (!key) {
-            msgDiv.textContent = '請輸入序號';
-            return;
-        }
-
-        msgDiv.textContent = '啟用中...';
-        document.getElementById('activateBtn').disabled = true;
-
-        chrome.runtime.sendMessage({ action: 'activateLicense', key: key }, (response) => {
-            document.getElementById('activateBtn').disabled = false;
-
-            if (response && response.success) {
-                msgDiv.textContent = '';
-                const days = response.days || 365;
-                alert(`🎉 啟用成功！您現在擁有 ${days} 天無限次防護。`);
-                updateLicenseStatus();
-                input.value = '';
-            } else {
-                msgDiv.textContent = '❌ ' + (response ? response.error : '啟用失敗');
-            }
-        });
-
-    });
-
-    // Buy Button Listener
-    const buyBtn = document.getElementById('buyBtn');
-    if (buyBtn) {
-        buyBtn.addEventListener('click', () => {
-            chrome.tabs.create({ url: 'https://nomorescamtw.web.app/' });
-        });
-    }
-
-    function updateLicenseStatus() {
-        chrome.runtime.sendMessage({ action: 'getLicenseStatus' }, (stats) => {
-            if (!stats) return;
-
-            const planLabel = document.getElementById('planLabel');
-            const expiryLabel = document.getElementById('expiryLabel');
-            const activationArea = document.getElementById('activationArea');
-
-            // 1. Plan Status
-            if (stats.isPremium) {
-                planLabel.textContent = '👑 版本: 進階版 (Premium)';
-                planLabel.style.color = '#2e7d32'; // Green
-
-                if (stats.expiryDate) {
-                    const expiry = new Date(stats.expiryDate).toLocaleDateString('zh-TW');
-                    expiryLabel.textContent = `到期日: ${expiry}`;
-                }
-
-                // Hide Activation
-                activationArea.style.display = 'none';
-
-                // Unlimited Usage UI
-                document.getElementById('webUsage').textContent = '無限';
-                document.getElementById('webProgress').style.width = '100%';
-                document.getElementById('webProgress').style.background = '#4caf50'; // Green
-
-                document.getElementById('emailUsage').textContent = '無限';
-                document.getElementById('emailProgress').style.width = '100%';
-                document.getElementById('emailProgress').style.background = '#4caf50'; // Green
-
-            } else {
-                planLabel.textContent = '💎 版本: 免費版';
-                planLabel.style.color = '#e65100'; // Orange
-                expiryLabel.textContent = '';
-
-                activationArea.style.display = 'block';
-
-                // Web Usage
-                const webPct = Math.min((stats.web.current / stats.web.limit) * 100, 100);
-                document.getElementById('webUsage').textContent = `${stats.web.current} / ${stats.web.limit}`;
-                document.getElementById('webProgress').style.width = `${webPct}%`;
-
-                if (stats.web.current >= stats.web.limit) {
-                    document.getElementById('webProgress').style.background = '#d32f2f'; // Red
-                } else {
-                    document.getElementById('webProgress').style.background = '#fb8c00'; // Orange
-                }
-
-                // Email Usage
-                const emailPct = Math.min((stats.email.current / stats.email.limit) * 100, 100);
-                document.getElementById('emailUsage').textContent = `${stats.email.current} / ${stats.email.limit}`;
-                document.getElementById('emailProgress').style.width = `${emailPct}%`;
-
-                if (stats.email.current >= stats.email.limit) {
-                    document.getElementById('emailProgress').style.background = '#d32f2f'; // Red
-                } else {
-                    document.getElementById('emailProgress').style.background = '#fb8c00'; // Orange
-                }
-            }
-        });
-    }
 
     /*
     // Manual Query Handler (Removed)
@@ -595,27 +499,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            if (response && response.status === 'limit_reached') {
-                if (confirm(`${response.message}\n\n是否前往購買？`)) {
-                    chrome.tabs.create({ url: response.upgradeUrl || 'https://nomorescamtw.web.app/' });
-                }
-                renderWhitelist();
-                return;
-            }
-
             alert('白名單新增失敗，請確認格式後重試。');
         });
     });
-
-    // Limit Msg Click Handler
-    if (limitMsg) {
-        limitMsg.addEventListener('click', () => {
-            // Check if it's currently showing an upgrade message
-            if (limitMsg.getAttribute('data-is-link') === 'true') {
-                chrome.tabs.create({ url: 'https://nomorescamtw.web.app/' });
-            }
-        });
-    }
 
     // Render List
     function renderWhitelist() {
@@ -625,28 +511,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const list = res[storageKey] || [];
             whitelistContainer.innerHTML = '';
 
-            // Update the shared Email + website-domain quota.
-            chrome.runtime.sendMessage({ action: 'getWhitelistQuota' }, (quota) => {
-                if (!quota || !quota.success) return;
-                const summary = `Email ${quota.emailCount}＋網站網域 ${quota.domainCount}＝${quota.total}`;
-                if (!quota.isPremium) {
-                    const isFull = quota.total >= quota.limit;
-                    limitMsg.textContent = isFull
-                        ? `${summary}/${quota.limit}（已滿；升級年費 NT$499 享無上限）`
-                        : `${summary}/${quota.limit}（免費版共用額度）`;
-                    limitMsg.style.color = isFull ? '#d32f2f' : '#fb8c00';
-                    limitMsg.style.cursor = 'pointer';
-                    limitMsg.style.textDecoration = 'underline';
-                    limitMsg.setAttribute('data-is-link', 'true');
-                    limitMsg.title = '點擊前往年費 NT$499 升級頁面';
-                } else {
-                    limitMsg.textContent = `${summary}（付費版無上限）`;
-                    limitMsg.style.color = '#2e7d32';
-                    limitMsg.style.cursor = 'default';
-                    limitMsg.style.textDecoration = 'none';
-                    limitMsg.removeAttribute('data-is-link');
-                    limitMsg.title = '';
-                }
+            chrome.runtime.sendMessage({ action: 'getWhitelistSummary' }, (summary) => {
+                if (!summary || !summary.success) return;
+                limitMsg.textContent = `Email ${summary.emailCount}＋網站網域 ${summary.domainCount}＝${summary.total}`;
             });
 
             if (list.length === 0) {

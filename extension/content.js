@@ -1,5 +1,4 @@
 const DAILY_RISK_DISMISSALS_KEY = 'dailyRiskDismissals';
-const WEB_UPGRADE_URL = 'https://nomorescamtw.web.app/';
 let fraudGuardTimerId = null;
 
 chrome.runtime.onMessage.addListener((request) => {
@@ -127,35 +126,13 @@ function showPageNotice(message, includeWhitelistAction = false) {
   return notice;
 }
 
-function showPageUpgradeNotice(message, upgradeUrl = WEB_UPGRADE_URL) {
-  const notice = showPageNotice(message);
-  const button = document.createElement('button');
-  button.textContent = '升級年費 NT$499';
-  button.style.display = 'block';
-  button.style.marginTop = '10px';
-  button.addEventListener('click', () => {
-    window.open(upgradeUrl, '_blank', 'noopener');
-  });
-  notice.appendChild(button);
-}
-
-function setWarningStatus(message, isError = false, showUpgrade = false) {
+function setWarningStatus(message, isError = false) {
   const status = document.getElementById('fraud-guard-action-status');
   if (!status) return;
   status.textContent = message;
   status.style.display = 'block';
   status.style.color = isError ? '#b3261e' : '#137333';
 
-  if (showUpgrade) {
-    const upgradeButton = document.createElement('button');
-    upgradeButton.textContent = '升級年費 NT$499';
-    upgradeButton.style.display = 'block';
-    upgradeButton.style.margin = '10px auto 0';
-    upgradeButton.addEventListener('click', () => {
-      window.open(WEB_UPGRADE_URL, '_blank', 'noopener');
-    });
-    status.appendChild(upgradeButton);
-  }
 }
 
 function dismissCurrentWebsiteForToday(callback) {
@@ -188,18 +165,10 @@ function addCurrentWebsiteToWhitelist(button) {
       return;
     }
 
-    if (response && response.status === 'limit_reached') {
-      if (document.getElementById('fraud-guard-overlay')) {
-        setWarningStatus(response.message, true, true);
-      } else {
-        showPageUpgradeNotice(response.message, response.upgradeUrl);
-      }
+    if (document.getElementById('fraud-guard-overlay')) {
+      setWarningStatus('白名單儲存失敗，請稍後重試。', true);
     } else {
-      if (document.getElementById('fraud-guard-overlay')) {
-        setWarningStatus('白名單儲存失敗，請稍後重試。', true);
-      } else {
-        showPageNotice('白名單儲存失敗，請稍後重試。');
-      }
+      showPageNotice('白名單儲存失敗，請稍後重試。');
     }
     if (button) {
       button.disabled = false;
@@ -348,7 +317,7 @@ function checkGovImpersonation() {
   // Skip if already on a gov.tw site
   if (hostname.endsWith('.gov.tw')) return;
 
-  // Run Local Check Directly (No Quota Needed for Keyword Match)
+  // Run the local keyword check.
   proceedWithGovCheck(title, hostname);
 }
 

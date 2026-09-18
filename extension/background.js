@@ -8,7 +8,6 @@ try {
     importScripts('firebase_config.js');
     importScripts('report_handler.js');
     importScripts('trusted_domains.js'); // Import Trusted Domains
-    importScripts('license_manager.js'); // Import License Manager
 } catch (e) {
     console.error('Failed to load scripts', e);
 }
@@ -19,10 +18,6 @@ let cachedRemoteWhitelist = [];
 
 const SAFE_ROOT_DOMAINS = ['bitbucket.org', 'github.com', 'facebook.com', 'instagram.com', 'twitter.com', 'google.com', 'youtube.com', 'line.me'];
 const DAILY_RISK_DISMISSALS_KEY = 'dailyRiskDismissals';
-const FREE_WHITELIST_LIMIT = 20;
-const UPGRADE_URL = 'https://nomorescamtw.web.app/';
-const UPGRADE_PRICE_LABEL = '年費 NT$499';
-
 let whitelistMutationQueue = Promise.resolve();
 let dailyRiskMutationQueue = Promise.resolve();
 
@@ -140,23 +135,15 @@ async function isWebRiskDismissedToday(hostname) {
     return dismissals.webHosts[normalizedHostname] === getLocalDateKey();
 }
 
-async function getWhitelistQuota() {
+async function getWhitelistSummary() {
     const stored = await chrome.storage.local.get(['userWhitelist', 'userDomainWhitelist']);
     const emailList = Array.isArray(stored.userWhitelist) ? stored.userWhitelist : [];
     const domainList = Array.isArray(stored.userDomainWhitelist) ? stored.userDomainWhitelist : [];
-    const stats = typeof LicenseManager !== 'undefined'
-        ? await LicenseManager.getStats()
-        : { isPremium: false };
-
     return {
         success: true,
-        isPremium: Boolean(stats && stats.isPremium),
         emailCount: new Set(emailList.map(normalizeStoredWhitelistEntry).filter(Boolean)).size,
         domainCount: new Set(domainList.map(normalizeDomain).filter(Boolean)).size,
-        total: uniqueWhitelistCount(emailList, domainList),
-        limit: FREE_WHITELIST_LIMIT,
-        upgradeUrl: UPGRADE_URL,
-        upgradePriceLabel: UPGRADE_PRICE_LABEL
+        total: uniqueWhitelistCount(emailList, domainList)
     };
 }
 
@@ -175,39 +162,28 @@ async function addUserWhitelistEntry(type, rawValue) {
         ? normalizeStoredWhitelistEntry
         : normalizeDomain;
     const alreadyExists = targetList.some(item => normalizer(item) === value);
-    const quota = await getWhitelistQuota();
+    const summary = await getWhitelistSummary();
 
     if (alreadyExists) {
-        return { ...quota, success: true, status: 'exists', value, storageKey };
-    }
-
-    if (!quota.isPremium && quota.total >= FREE_WHITELIST_LIMIT) {
-        return {
-            ...quota,
-            success: false,
-            status: 'limit_reached',
-            message: `免費版白名單共用額度已滿（${quota.total}/${FREE_WHITELIST_LIMIT}）。升級${UPGRADE_PRICE_LABEL}，享無上限白名單。`
-        };
+        return { ...summary, success: true, status: 'exists', value, storageKey };
     }
 
     targetList.push(value);
     await chrome.storage.local.set({ [storageKey]: targetList });
 
-    if (quota.isPremium) {
-        try {
-            const syncStored = await chrome.storage.sync.get(storageKey);
-            const syncList = Array.isArray(syncStored[storageKey]) ? [...syncStored[storageKey]] : [];
-            if (!syncList.some(item => normalizer(item) === value)) {
-                syncList.push(value);
-                await chrome.storage.sync.set({ [storageKey]: syncList });
-            }
-        } catch (error) {
-            console.warn('[NoMoreScam] Whitelist sync failed:', error);
+    try {
+        const syncStored = await chrome.storage.sync.get(storageKey);
+        const syncList = Array.isArray(syncStored[storageKey]) ? [...syncStored[storageKey]] : [];
+        if (!syncList.some(item => normalizer(item) === value)) {
+            syncList.push(value);
+            await chrome.storage.sync.set({ [storageKey]: syncList });
         }
+    } catch (error) {
+        console.warn('[NoMoreScam] Whitelist sync failed:', error);
     }
 
-    const updatedQuota = await getWhitelistQuota();
-    return { ...updatedQuota, success: true, status: 'added', value, storageKey };
+    const updatedSummary = await getWhitelistSummary();
+    return { ...updatedSummary, success: true, status: 'added', value, storageKey };
 }
 
 function normalizeDomainForMatch(value) {
@@ -230,22 +206,18 @@ function matchesDomainEntry(hostname, allowed) {
     return normalizedHostname === normalizedAllowed || normalizedHostname.endsWith('.' + normalizedAllowed);
 }
 
-// ... (Existing Firebase Helper) ...
-
-// Initialize License Manager on Startup
-chrome.runtime.onStartup.addListener(async () => {
-    if (typeof LicenseManager !== 'undefined') {
-        await LicenseManager.init();
+// Remove obsolete billing state while preserving preferences and whitelists.
+async function clearRetiredBillingState() {
+    for (const area of [chrome.storage.local, chrome.storage.sync]) {
+        try {
+            await area.remove(['userLicense', 'usageStats']);
+        } catch (error) {
+            console.warn('[NoMoreScam] Could not clear retired billing state:', error);
+        }
     }
-    // ... existing logic ...
-});
-
-// Also on Installed
-chrome.runtime.onInstalled.addListener(async (details) => {
-    if (typeof LicenseManager !== 'undefined') {
-        await LicenseManager.init();
-    }
-});
+}
+chrome.runtime.onStartup.addListener(clearRetiredBillingState);
+chrome.runtime.onInstalled.addListener(clearRetiredBillingState);
 
 // Firebase Increment Helper (REST API)
 async function incrementStat(statName) {
@@ -1076,7 +1048,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             return; // Do not protect if not agreed
         }
 
-        // Exclude Whitelisted Domains (Save Quota)
+        // Exclude Whitelisted Domains
         const whitelist = ['facebook.com', 'www.facebook.com', 'google.com', 'www.google.com', 'youtube.com', 'www.youtube.com', 'instagram.com', 'www.instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'github.com', 'threads.net', 'www.threads.net', 'threads.com', 'www.threads.com', 'bitbucket.org', 'www.bitbucket.org'];
         try {
             // Safe URL Parsing
@@ -1086,7 +1058,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 return;
             }
 
-            // Check User Whitelist AND Remote Whitelist (save quota)
+            // Check User Whitelist AND Remote Whitelist
             const { userDomainWhitelist } = await chrome.storage.local.get('userDomainWhitelist');
 
             // Check User Whitelist First
@@ -1114,26 +1086,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             currentHostname = new URL(tab.url).hostname;
         } catch (e) { return; }
 
-        // A user-dismissed hostname should not consume quota or increment warning stats today.
+        // A user-dismissed hostname should not increment warning stats today.
         if (await isWebRiskDismissedToday(currentHostname)) {
             return;
         }
 
-        // Skip quota check if this domain was already scanned today and was safe
-        const domainAlreadyScanned = LicenseManager.isDomainScannedToday(currentHostname);
-
-        // Check Quota (Web) - skip if domain already scanned
-        if (!domainAlreadyScanned) {
-            const canScan = await LicenseManager.canScan('web');
-            if (!canScan) {
-                // Quota exceeded, skip check
-                return;
-            }
-        }
-
         const fraudInfo = await checkUrl(tab.url);
         if (fraudInfo) {
-            await LicenseManager.incrementUsage('web');
 
             console.log(`Fraud detected: ${tab.url}`, fraudInfo);
 
@@ -1151,7 +1110,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             try {
                 const ageInfo = await checkDomainAge(tab.url);
                 if (ageInfo) {
-                    await LicenseManager.incrementUsage('web');
                     console.log(`Newly Registered Domain detected: ${tab.url}`, ageInfo);
 
                     incrementStat('total_warnings');
@@ -1166,11 +1124,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 console.error('Domain Age Check Error', e);
             }
 
-            // Safe site: only increment if domain not already scanned today
-            if (!domainAlreadyScanned) {
-                await LicenseManager.incrementUsage('web');
-            }
-            LicenseManager.addScannedDomain(currentHostname);
         }
     }
 });
@@ -1236,14 +1189,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true; // Async response
     }
 
-    // 3. Check License Status (For Premium Features)
-    if (request.action === 'checkLicenseStatus') {
-        LicenseManager.checkLicense().then(isActive => {
-            sendResponse({ isPro: isActive });
-        });
-        return true; // Keep channel open
-    }
-
     // 3. AI Analysis & Report (from Popup) - Defined in report_handler.js
     if (request.action === 'analyzeAndReport') {
         if (typeof analyzeWithAI !== 'function') {
@@ -1284,45 +1229,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true; // Async response
     }
 
-    // === 5. License & Quota Management ===
-
-    // === 5. License & Quota Management ===
-
-    // Check Quota
+    // Compatibility for content scripts left open during the free-version update.
     if (request.action === 'checkQuota') {
-        LicenseManager.canScan(request.type).then(canScan => {
-            sendResponse({ canScan: canScan });
-        });
-        return true; // Async
+        sendResponse({ canScan: true });
+        return false;
     }
-
-    // Increment Quota
     if (request.action === 'incrementQuota') {
-        LicenseManager.incrementUsage(request.type).then(() => {
-            sendResponse({ success: true });
-        });
-        return true; // Async
+        sendResponse({ success: true });
+        return false;
     }
 
-    // Get License Status (For Popup)
-    if (request.action === 'getLicenseStatus') {
-        LicenseManager.getStats().then(stats => {
-            sendResponse(stats);
-        });
-        return true; // Async
-    }
-
-    // Activate License
-    if (request.action === 'activateLicense') {
-        LicenseManager.activateLicense(request.key)
-            .then(result => sendResponse(result))
-            .catch(err => sendResponse({ success: false, error: err.message }));
-        return true; // Async
-    }
-
-    // Shared whitelist quota and mutation API for popup/content/Gmail.
-    if (request.action === 'getWhitelistQuota') {
-        getWhitelistQuota()
+    // Shared whitelist summary and mutation API for popup/content/Gmail.
+    if (request.action === 'getWhitelistSummary') {
+        getWhitelistSummary()
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;

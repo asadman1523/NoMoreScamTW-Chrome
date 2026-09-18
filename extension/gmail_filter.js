@@ -2,7 +2,6 @@
 console.log("[NoMoreScam] Gmail Filter Loaded (Production v1.1)");
 
 const GMAIL_DAILY_RISK_DISMISSALS_KEY = 'dailyRiskDismissals';
-const GMAIL_UPGRADE_URL = 'https://nomorescamtw.web.app/';
 let checkedLinks = new Map();
 let debounceTimer = null;
 let dailyRiskDismissalsCache = { gmailEmails: {}, gmailDomains: {} };
@@ -224,31 +223,6 @@ function dismissGmailRiskToday(email, scope, callback) {
     });
 }
 
-function showGmailUpgrade(container, message, upgradeUrl = GMAIL_UPGRADE_URL) {
-    let status = container.querySelector('.nms-action-status');
-    if (!status) {
-        status = document.createElement('div');
-        status.className = 'nms-action-status';
-        container.appendChild(status);
-    }
-    status.textContent = message;
-    status.style.marginTop = '10px';
-    status.style.padding = '8px';
-    status.style.background = '#fce8e6';
-    status.style.color = '#b3261e';
-    status.style.borderRadius = '4px';
-
-    const upgradeButton = document.createElement('button');
-    upgradeButton.textContent = '升級年費 NT$499';
-    upgradeButton.style.display = 'block';
-    upgradeButton.style.margin = '8px auto 0';
-    upgradeButton.addEventListener('click', (event) => {
-        event.stopPropagation();
-        window.open(upgradeUrl, '_blank', 'noopener');
-    });
-    status.appendChild(upgradeButton);
-}
-
 function addGmailWhitelistEntry(senderElem, scope, button) {
     const email = normalizeEmail(senderElem && senderElem.getAttribute('email'));
     const domain = getEmailDomain(email);
@@ -274,13 +248,7 @@ function addGmailWhitelistEntry(senderElem, scope, button) {
             return;
         }
 
-        if (response && response.status === 'limit_reached') {
-            showGmailUpgrade(
-                button.parentElement,
-                response.message,
-                response.upgradeUrl
-            );
-        } else {
+        {
             const status = button.parentElement.querySelector('.nms-action-status') ||
                 document.createElement('div');
             status.className = 'nms-action-status';
@@ -398,14 +366,14 @@ function getCurrentOpenedEmailReportData() {
 
     const email = openedSender ? openedSender.getAttribute('email') : '';
     const senderName = openedSender ? (openedSender.name || openedSender.innerText || openedSender.textContent || '') : '';
-    const subject = subjectElem ? (subjectElem.innerText || subjectElem.textContent || '') : '';
-    const body = bodyElem ? (bodyElem.innerText || bodyElem.textContent || '') : '';
+    const subject = subjectElem ? (subjectElem.innerText || subjectElem.textContent || '').trim() : '';
+    const body = bodyElem ? (bodyElem.innerText || bodyElem.textContent || '').trim() : '';
 
     return {
         email: email ? email.trim().toLowerCase() : '',
         senderName: senderName.trim(),
-        subject: subject.trim(),
-        body: body.trim().slice(0, MAX_REPORT_BODY_LENGTH)
+        subject: subjectElem ? (subject || '（無標題）') : '',
+        body: bodyElem ? (body.slice(0, MAX_REPORT_BODY_LENGTH) || '（無文字內文）') : ''
     };
 }
 
@@ -435,30 +403,12 @@ function scanOpenedEmail() {
         const email = normalizeEmail(openedSender.getAttribute('email'));
         if (!email) return;
 
-        // Daily dismissals must be checked before quota is consumed.
+        // Respect daily dismissals before scanning.
         checkGmailRiskDismissed(email, (isDismissed) => {
             if (isDismissed) {
                 openedSender.setAttribute('data-gov-checked', 'true');
                 removeGmailWarningsForSender(email);
                 return;
-            }
-
-        // Logic: Check Quota -> If allowed -> Increment (if new) -> Scan
-        chrome.runtime.sendMessage({ action: 'checkQuota', type: 'email' }, (response) => {
-            if (chrome.runtime.lastError || !response || !response.canScan) {
-                // Quota Exceeded -> Show Promo Banner
-                showQuotaExceededBanner(openedSender);
-                return; // Quota exceeded or error
-            }
-
-            // Increment Quota (Once per email view)
-            if (!openedSender.getAttribute('data-quota-counted')) {
-                openedSender.setAttribute('data-quota-counted', 'true');
-                try {
-                    chrome.runtime.sendMessage({ action: 'incrementQuota', type: 'email' });
-                } catch (e) {
-                    // Context invalidated
-                }
             }
 
             if (!openedSender.getAttribute('data-gov-checked')) {
@@ -505,7 +455,6 @@ function scanOpenedEmail() {
                     });
                 });
             }
-        });
         });
     }
 }
@@ -858,14 +807,6 @@ async function scanEmailBody() {
             return;
         }
 
-    // Check Quota after daily dismissal.
-    chrome.runtime.sendMessage({ action: 'checkQuota', type: 'email' }, (response) => {
-        if (chrome.runtime.lastError || !response || !response.canScan) {
-            // Quota Exceeded -> Show Promo Banner
-            showQuotaExceededBanner(emailBodies[0]); // Only show once per body scan batch
-            return;
-        }
-
         for (const body of emailBodies) {
             if (body.getAttribute('data-gov-body-checked') === 'true') continue;
 
@@ -932,55 +873,6 @@ async function scanEmailBody() {
                 });
             }
         }
-    });
-    });
-}
-
-// Show Quota Exceeded Banner (New Function)
-function showQuotaExceededBanner(anchorElement) {
-    if (!anchorElement) return;
-
-    // Use .gs (email container) or .a3s (body) or fallback
-    const emailContainer = anchorElement.closest('.gs') || anchorElement.closest('.a3s');
-    if (!emailContainer) return;
-
-    if (emailContainer.querySelector('.quota-limit-banner')) return; // Already shown
-
-    const banner = document.createElement('div');
-    banner.className = 'quota-limit-banner';
-    banner.style.backgroundColor = "#e8f0fe"; // Light blue
-    banner.style.color = "#1967d2";
-    banner.style.border = "1px solid #d2e3fc";
-    banner.style.padding = "10px 15px";
-    banner.style.margin = "10px 0";
-    banner.style.borderRadius = "8px";
-    banner.style.display = "flex";
-    banner.style.alignItems = "center";
-    banner.style.justifyContent = "space-between";
-    banner.style.fontSize = "14px";
-    banner.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
-
-    banner.innerHTML = `
-        <div style="display: flex; align-items: center;">
-            <span style="font-size: 1.2em; margin-right: 8px;">🛡️</span>
-            <div>
-                <strong>麥騙 - 今日 Email 掃描額度已滿</strong>
-                <div style="font-size: 0.9em; margin-top: 2px; color: #5f6368;">升級進階版，享受無限量 AI 偵測與完整白名單功能。</div>
-            </div>
-        </div>
-        <button class="upgrade-btn" style="background: #1a73e8; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 500;">
-            立即升級
-        </button>
-    `;
-
-    // Insert at the top
-    emailContainer.prepend(banner);
-
-    // Bind Button
-    const btn = banner.querySelector('.upgrade-btn');
-    btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        window.open('https://nomorescamtw.web.app/', '_blank');
     });
 }
 
