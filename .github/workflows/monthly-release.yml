@@ -1,0 +1,57 @@
+name: Monthly Chrome release
+
+on:
+  schedule:
+    # The first day of each month at 11:17 in Taiwan (03:17 UTC).
+    - cron: '17 3 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: monthly-chrome-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check extension
+        run: npm test
+      - name: Package extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -X utf8 tools/package.py
+          version=$(python -X utf8 -c 'import json; from pathlib import Path; print(json.loads(Path("extension/manifest.json").read_text(encoding="utf-8"))["version"])')
+          month=$(date -u +%Y-%m)
+          archive="NoMoreScamTW_Extension_v${version}_${month}.zip"
+          mv "dist/NoMoreScamTW_Extension_v${version}.zip" "dist/${archive}"
+          echo "RELEASE_MONTH=${month}" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=${version}" >> "$GITHUB_ENV"
+          echo "RELEASE_ARCHIVE=${archive}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=monthly-${month}" >> "$GITHUB_ENV"
+      - name: Publish monthly release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" "dist/$RELEASE_ARCHIVE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "${RELEASE_MONTH} Chrome 外掛 v${RELEASE_VERSION}" \
+            --notes "每月 Chrome 外掛封存包。原始碼提交：${GITHUB_SHA}。外掛版本：${RELEASE_VERSION}。Chrome 商店上架另行處理。" \
+            --latest

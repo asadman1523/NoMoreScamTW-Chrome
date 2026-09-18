@@ -39,6 +39,10 @@ py -3 -X utf8 tools/package.py
 
 ZIP 產物位於 `dist/`，只包含明確列出的外掛執行檔。
 
+## 每月封存包
+
+[Releases](https://github.com/asadman1523/NoMoreScamTW-Chrome/releases) 保存每月的 Chrome 外掛 ZIP。自 2026 年 1 月起的舊包取自該月底前最後一筆 Chrome 提交；若當月沒有新提交，沿用上一版。另保留 2026 年 9 月初的 2.7.15 舊版。往後每月 1 日台灣時間 11:17 由 GitHub 自動測試、打包並建立 Release，也可手動執行。月份是打包標籤，外掛版本仍以 `manifest.json` 為準。舊包可能包含已停用的付費功能，僅供歷史查閱；Chrome 商店上架由維護者另行處理。
+
 ## 文件
 
 - [過濾邏輯](docs/FILTERING_LOGIC.md)
