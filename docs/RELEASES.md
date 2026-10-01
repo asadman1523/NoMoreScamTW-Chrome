@@ -14,3 +14,4 @@
 | 2026-08 | 2.7.12 | [monthly-2026-08](https://github.com/asadman1523/NoMoreScamTW-Chrome/releases/tag/monthly-2026-08) |
 | 2026-09（舊版） | 2.7.15 | [archive-2026-09-v2.7.15](https://github.com/asadman1523/NoMoreScamTW-Chrome/releases/tag/archive-2026-09-v2.7.15) |
 | 2026-09 | 2.8.0 | [monthly-2026-09](https://github.com/asadman1523/NoMoreScamTW-Chrome/releases/tag/monthly-2026-09) |
+| 2026-10 | 2.8.0 | [monthly-2026-10](https://github.com/asadman1523/NoMoreScamTW-Chrome/releases/tag/monthly-2026-10) |
